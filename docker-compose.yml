@@ -1,0 +1,56 @@
+name: spark-etl
+version: '3'
+services:
+  # 소스 데이터베이스 (PostgreSQL)
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: source_user
+      POSTGRES_PASSWORD: source_password
+      POSTGRES_DB: source_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts/postgres:/docker-entrypoint-initdb.d
+
+  # 타겟 데이터베이스 (MySQL)
+  mysql:
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: target_db
+      MYSQL_USER: target_user
+      MYSQL_PASSWORD: target_password
+    ports:
+      - "13306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # Spark 마스터 노드
+  spark-master:
+    image: bitnami/spark:latest
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8080:8080"  # UI
+      - "7077:7077"  # Spark 마스터 포트
+    volumes:
+      - ./spark-scripts:/opt/spark-scripts
+
+  # Spark 워커 노드
+  spark-worker:
+    image: bitnami/spark:latest
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+    depends_on:
+      - spark-master
+    volumes:
+      - ./spark-scripts:/opt/spark-scripts
+
+volumes:
+  postgres_data:
+  mysql_data:
