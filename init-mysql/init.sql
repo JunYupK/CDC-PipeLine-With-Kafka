@@ -1,39 +1,58 @@
-CREATE TABLE trades (
-    trade_id SERIAL PRIMARY KEY,
-    user_id INTEGER,
-    stock_code VARCHAR(20),
-    trade_type VARCHAR(4),
-    quantity INTEGER,
-    price DECIMAL(10,2),
-    trade_timestamp TIMESTAMP,
-    order_type VARCHAR(10), -- 'MARKET', 'LIMIT'
-    platform VARCHAR(10)    -- 'WEB', 'APP', 'API'
+-- 투자자 행동 분석 테이블
+CREATE TABLE investor_behavior_analysis (
+    user_id INT PRIMARY KEY,
+    preferred_trading_hour INT,
+    preferred_trading_day INT,
+    preferred_platform VARCHAR(10),
+    total_trades INT,
+    total_traded_value DECIMAL(20,2),
+    avg_trade_value DECIMAL(20,2),
+    avg_buy_value DECIMAL(20,2),
+    avg_sell_value DECIMAL(20,2),
+    market_order_count INT,
+    limit_order_count INT
 );
-CREATE TABLE stock_price_history (
+
+-- 포트폴리오 리스크 분석 테이블
+CREATE TABLE portfolio_risk_analysis (
+    user_id INT PRIMARY KEY,
+    total_portfolio_value DECIMAL(20,2),
+    total_profit_loss DECIMAL(20,2),
+    avg_profit_loss_pct DECIMAL(10,2),
+    portfolio_beta DECIMAL(10,4),
+    portfolio_volatility DECIMAL(10,4),
+    portfolio_sharpe_ratio DECIMAL(10,4)
+);
+
+-- 기술적 분석 지표 테이블
+CREATE TABLE trading_signals (
     stock_code VARCHAR(20),
     price_date DATE,
-    open_price DECIMAL(10,2),
-    high_price DECIMAL(10,2),
-    low_price DECIMAL(10,2),
-    close_price DECIMAL(10,2),
-    volume INTEGER,
+    prev_close DECIMAL(10,2),
+    price_change DECIMAL(10,2),
+    price_change_pct DECIMAL(10,2),
+    5d_avg DECIMAL(10,2),
+    20d_avg DECIMAL(10,2),
+    volatility_20d DECIMAL(10,4),
+    rsi_14d DECIMAL(10,2),
     PRIMARY KEY (stock_code, price_date)
 );
 
-CREATE TABLE user_portfolio (
-    portfolio_id SERIAL PRIMARY KEY,
-    user_id INTEGER,
+-- 거래량 이상치 테이블
+CREATE TABLE volume_anomalies (
     stock_code VARCHAR(20),
-    quantity INTEGER,
-    avg_purchase_price DECIMAL(10,2),
-    last_updated TIMESTAMP
+    trade_date DATE,
+    daily_volume INT,
+    avg_5d_volume DECIMAL(20,2),
+    volume_ratio DECIMAL(10,2),
+    PRIMARY KEY (stock_code, trade_date)
 );
 
-CREATE TABLE risk_metrics (
+-- 가격 이상치 테이블
+CREATE TABLE price_anomalies (
     stock_code VARCHAR(20),
-    calc_date DATE,
-    beta DECIMAL(10,4),
-    volatility DECIMAL(10,4),
-    sharpe_ratio DECIMAL(10,4),
-    PRIMARY KEY (stock_code, calc_date)
+    price_date DATE,
+    close_price DECIMAL(10,2),
+    price_change_pct DECIMAL(10,2),
+    PRIMARY KEY (stock_code, price_date)
 );

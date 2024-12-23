@@ -2,48 +2,63 @@ from pyspark.sql import SparkSession, Window
 from pyspark.sql.functions import (
     sum, count, avg, stddev, max, min, col, expr, 
     when, datediff, rank, lag, date_format, 
-    hour, dayofweek, month, year, lit
+    hour, dayofweek, month, year, lit,
+    abs as spark_abs
 )
 import pyspark.sql.functions as F
 
 def create_spark_session():
     return SparkSession.builder \
         .appName("Advanced Stock Trading Analysis") \
-        .config("spark.jars", "/opt/spark-scripts/postgresql-42.2.18.jar,/opt/spark-scripts/mysql-connector-java-8.0.23.jar") \
+        .config("spark.jars", "./jars/postgresql-42.2.18.jar,./jars/mysql-connector-java-8.0.23.jar") \
         .config("spark.sql.session.timeZone", "Asia/Seoul") \
         .getOrCreate()
+
 
 def extract_data(spark):
     # 공통 데이터베이스 설정
     postgres_options = {
-        "url": "jdbc:postgresql://postgres:5432/source_db",
-        "user": "source_user",
-        "password": "source_password",
+        "url": "jdbc:postgresql://localhost:5432/source_db",
+        "user": "kjy",
+        "password": "home",
         "driver": "org.postgresql.Driver"
     }
 
-    # 각 테이블 추출
-    trades_df = spark.read.format("jdbc") \
-        .options(**postgres_options) \
-        .option("dbtable", "trades") \
-        .load()
+    try:
+        # 각 테이블 추출
+        trades_df = spark.read.format("jdbc") \
+            .options(**postgres_options) \
+            .option("dbtable", "trades") \
+            .load()
 
-    stock_price_df = spark.read.format("jdbc") \
-        .options(**postgres_options) \
-        .option("dbtable", "stock_price_history") \
-        .load()
+        print("trades table loaded successfully")
 
-    portfolio_df = spark.read.format("jdbc") \
-        .options(**postgres_options) \
-        .option("dbtable", "user_portfolio") \
-        .load()
+        stock_price_df = spark.read.format("jdbc") \
+            .options(**postgres_options) \
+            .option("dbtable", "stock_price_history") \
+            .load()
 
-    risk_df = spark.read.format("jdbc") \
-        .options(**postgres_options) \
-        .option("dbtable", "risk_metrics") \
-        .load()
+        print("stock_price_history table loaded successfully")
 
-    return trades_df, stock_price_df, portfolio_df, risk_df
+        portfolio_df = spark.read.format("jdbc") \
+            .options(**postgres_options) \
+            .option("dbtable", "user_portfolio") \
+            .load()
+
+        print("user_portfolio table loaded successfully")
+
+        risk_df = spark.read.format("jdbc") \
+            .options(**postgres_options) \
+            .option("dbtable", "risk_metrics") \
+            .load()
+
+        print("risk_metrics table loaded successfully")
+
+        return trades_df, stock_price_df, portfolio_df, risk_df
+
+    except Exception as e:
+        print(f"Error in extract_data: {str(e)}")
+        return None, None, None, None
 
 def calculate_user_investment_behavior(trades_df):
     """사용자별 투자 행동 패턴 분석"""
@@ -103,27 +118,35 @@ def analyze_portfolio_risk(portfolio_df, risk_df, stock_price_df):
     
     return portfolio_risk
 
+
 def calculate_trading_signals(stock_price_df):
     """기술적 분석 지표 계산"""
     window_spec = Window.partitionBy('stock_code').orderBy('price_date')
-    
-    return stock_price_df \
+
+    # 기본 지표 계산
+    df = stock_price_df \
         .withColumn('prev_close', lag('close_price', 1).over(window_spec)) \
         .withColumn('price_change', col('close_price') - col('prev_close')) \
         .withColumn('price_change_pct', col('price_change') / col('prev_close') * 100) \
         .withColumn('5d_avg', avg('close_price').over(window_spec.rowsBetween(-4, 0))) \
         .withColumn('20d_avg', avg('close_price').over(window_spec.rowsBetween(-19, 0))) \
-        .withColumn('volatility_20d', stddev('price_change_pct').over(window_spec.rowsBetween(-19, 0))) \
-        .withColumn('rsi_14d', expr("""
-            case 
-                when avg(case when price_change > 0 then price_change else 0 end).over(window_spec.rowsBetween(-13, 0)) = 0 
-                    then 0 
-                else 100 - (100 / (1 + 
-                    avg(case when price_change > 0 then price_change else 0 end).over(window_spec.rowsBetween(-13, 0)) /
-                    avg(case when price_change < 0 then abs(price_change) else 0 end).over(window_spec.rowsBetween(-13, 0))
-                ))
-            end
-        """))
+        .withColumn('volatility_20d', stddev('price_change_pct').over(window_spec.rowsBetween(-19, 0)))
+
+    # RSI 계산을 위한 이동평균 계산
+    df = df \
+        .withColumn('gain', when(col('price_change') > 0, col('price_change')).otherwise(0)) \
+        .withColumn('loss', when(col('price_change') < 0, spark_abs(col('price_change'))).otherwise(0)) \
+        .withColumn('avg_gain', avg('gain').over(window_spec.rowsBetween(-13, 0))) \
+        .withColumn('avg_loss', avg('loss').over(window_spec.rowsBetween(-13, 0))) \
+        .withColumn('rs', col('avg_gain') / col('avg_loss')) \
+        .withColumn('rsi_14d',
+                    when(col('avg_loss') == 0, 100)
+                    .when(col('avg_gain') == 0, 0)
+                    .otherwise(100 - (100 / (1 + col('rs'))))
+                    )
+
+    return df
+
 
 def identify_trading_anomalies(trades_df, stock_price_df):
     """비정상 거래 패턴 식별"""
@@ -131,7 +154,7 @@ def identify_trading_anomalies(trades_df, stock_price_df):
     daily_volume = trades_df \
         .groupBy('stock_code', date_format('trade_timestamp', 'yyyy-MM-dd').alias('trade_date')) \
         .agg(sum('quantity').alias('daily_volume'))
-    
+
     window_spec = Window.partitionBy('stock_code').orderBy('trade_date')
     volume_anomalies = daily_volume \
         .withColumn('avg_5d_volume', avg('daily_volume').over(window_spec.rowsBetween(-4, 0))) \
@@ -139,22 +162,23 @@ def identify_trading_anomalies(trades_df, stock_price_df):
         .where(col('volume_ratio') > 3)  # 거래량이 5일 평균의 3배 이상
 
     # 가격 급등락 패턴
+    price_window_spec = Window.partitionBy('stock_code').orderBy('price_date')
     price_changes = stock_price_df \
-        .withColumn('price_change_pct', 
-            (col('close_price') - lag('close_price', 1).over(window_spec)) / 
-            lag('close_price', 1).over(window_spec) * 100
-        ) \
-        .where(abs(col('price_change_pct')) > 10)  # 가격이 10% 이상 변동
+        .withColumn('price_change_pct',
+                    (col('close_price') - lag('close_price', 1).over(price_window_spec)) /
+                    lag('close_price', 1).over(price_window_spec) * 100
+                    ) \
+        .where(spark_abs(col('price_change_pct')) > 10)  # abs() -> spark_abs() 로 변경
 
     return volume_anomalies, price_changes
 
 def load_to_mysql(df, table_name):
     df.write \
         .format("jdbc") \
-        .option("url", "jdbc:mysql://mysql:3306/target_db") \
+        .option("url", "jdbc:mysql://localhost:13306/target_db") \
         .option("dbtable", table_name) \
-        .option("user", "target_user") \
-        .option("password", "target_password") \
+        .option("user", "kjy") \
+        .option("password", "home") \
         .option("driver", "com.mysql.cj.jdbc.Driver") \
         .mode("overwrite") \
         .save()
@@ -164,21 +188,22 @@ def main():
     try:
         # 데이터 추출
         trades_df, stock_price_df, portfolio_df, risk_df = extract_data(spark)
-        
-        # 투자자 행동 분석
+
+        # # 투자자 행동 분석
         investor_behavior = calculate_user_investment_behavior(trades_df)
         load_to_mysql(investor_behavior, "investor_behavior_analysis")
-        
-        # 포트폴리오 리스크 분석
+        #
+        # # 포트폴리오 리스크 분석
         portfolio_risk = analyze_portfolio_risk(portfolio_df, risk_df, stock_price_df)
         load_to_mysql(portfolio_risk, "portfolio_risk_analysis")
-        
-        # 기술적 분석 지표
+        #
+        # # 기술적 분석 지표
         trading_signals = calculate_trading_signals(stock_price_df)
         load_to_mysql(trading_signals, "trading_signals")
-        
-        # 이상 거래 탐지
+        #
+        # # 이상 거래 탐지
         volume_anomalies, price_anomalies = identify_trading_anomalies(trades_df, stock_price_df)
+
         load_to_mysql(volume_anomalies, "volume_anomalies")
         load_to_mysql(price_anomalies, "price_anomalies")
         

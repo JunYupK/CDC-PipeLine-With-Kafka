@@ -20,7 +20,7 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: target_db
       MYSQL_USER: kjy
-      MYSQL_PASSWORD: gome
+      MYSQL_PASSWORD: home
     ports:
       - "13306:3306"
     volumes:
