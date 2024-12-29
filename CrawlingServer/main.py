@@ -9,18 +9,23 @@ app = FastAPI(title="Hello World API")
 @app.get("/")
 async def hello_world():
     return {"message": "Hello, World!"}
-
 @app.get("/crwal")
 async def crwal_data():
     # 데이터 추출 스키마 정의
     schema = {
         "name": "Naver IT News",
-        "baseSelector": ".media_end_head_title",  # 각 뉴스 항목을 감싸는 컨테이너
+        "baseSelector": "div.section_latest_article._CONTENT_LIST._PERSIST_META ul",  # 각 뉴스 항목을 감싸는 컨테이너
         "fields": [
             {
                 "name": "title",
-                "selector": "h2.media_end_head_headline > span",
+                "selector": "li div.sa_text > a > strong",
                 "type": "text"
+            },
+            {
+                "name": "link",
+                "selector": "li div.sa_text > a",
+                "type": "attribute",
+                "attribute": "href"
             }
         ]
     }
@@ -33,7 +38,7 @@ async def crwal_data():
     ) as crawler:
 
         result = await crawler.arun(
-            url="https://n.news.naver.com/mnews/article/138/0002188585",
+            url="https://news.naver.com/section/105",
             extraction_strategy=JsonCssExtractionStrategy(schema, verbose=True),
             cache_mode=CacheMode.BYPASS
         )
@@ -41,7 +46,7 @@ async def crwal_data():
         try:
             companies = json.loads(result.extracted_content)
             print(f"Successfully extracted {len(companies)} companies")
-            print(json.dumps(companies[0], indent=2))
+            print(companies)
             return companies
         except json.JSONDecodeError:
             print("Failed to parse JSON result")
