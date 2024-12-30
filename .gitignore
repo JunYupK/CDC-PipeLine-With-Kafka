@@ -1,3 +1,5 @@
 .idea/
 ./CrawlingServer/venv__pycache__/
+CrawlingServer/venv/
+data/
 *.pyc
