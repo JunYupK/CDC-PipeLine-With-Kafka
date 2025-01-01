@@ -4,7 +4,7 @@ import json
 from crawl4ai import JsonCssExtractionStrategy, AsyncWebCrawler, CacheMode
 
 
-async def crawl_news(click_count=5, min_articles=200):
+async def naver_news_matadata_crwaler(url ,click_count=5):
     schema = {
         "name": "Naver IT News",
         "baseSelector": "#newsct div.section_latest_article._CONTENT_LIST._PERSIST_META ul > li",
@@ -66,7 +66,7 @@ async def crawl_news(click_count=5, min_articles=200):
     try:
         async with AsyncWebCrawler(headless=False, verbose=True) as crawler:
             result = await crawler.arun(
-                url="https://news.naver.com/section/105",
+                url=url,
                 js_code=preload_js,
                 wait_for="css:#newsct div.section_latest_article",
                 extraction_strategy=extraction_strategy,
@@ -81,7 +81,7 @@ async def crawl_news(click_count=5, min_articles=200):
         print(f"크롤링 중 오류 발생: {str(e)}")
         return 0, None
 
-async def main():
+async def meta_crwaling(url):
     max_retries = 5
     min_articles = 200
     current_retry = 0
@@ -89,7 +89,7 @@ async def main():
 
     while current_retry < max_retries:
         print(f"\n시도 {current_retry + 1}/{max_retries}")
-        article_count, articles = await crawl_news(click_count, min_articles)
+        article_count, articles = await naver_news_matadata_crwaler(url, click_count)
 
         if articles and article_count >= min_articles:
             print(f"\n성공: {article_count}개의 기사를 수집했습니다.")
