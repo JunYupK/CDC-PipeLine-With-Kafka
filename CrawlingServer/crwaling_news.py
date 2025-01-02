@@ -83,9 +83,9 @@ async def crawl_news(click_count=5, min_articles=200):
 
 async def main():
     max_retries = 5
-    min_articles = 200
+    min_articles = 100
     current_retry = 0
-    click_count = 30
+    click_count = 3
 
     while current_retry < max_retries:
         print(f"\n시도 {current_retry + 1}/{max_retries}")

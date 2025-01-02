@@ -45,7 +45,7 @@ def main():
     print("크롤링 스케줄러 시작...")
 
     # 3시간마다 실행
-    schedule.every(3).hours.do(run_crawling)
+    schedule.every(2).hours.do(run_crawling)
 
     # 시작하자마자 첫 실행
     run_crawling()
