@@ -5,8 +5,17 @@ from datetime import datetime
 import schedule
 import time
 from pathlib import Path
-from crwaling_news import main as crawl_news
-from crawling_from_url import main as crawl_content
+from crwaling_news import meta_crwaling as crawl_news
+from crawling_from_url import get_article as crawl_content
+
+URLS = [
+    "https://news.naver.com/section/100",
+    "https://news.naver.com/section/101",
+    "https://news.naver.com/section/102",
+    "https://news.naver.com/section/103",
+    "https://news.naver.com/section/104",
+    "https://news.naver.com/section/105"
+]
 
 
 async def crawling_job():

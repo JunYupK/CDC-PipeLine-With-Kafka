@@ -39,7 +39,7 @@ async def get_article_content(url, crawler):
         return None
 
 
-async def main(timestamp):
+async def get_article(timestamp):
     try:
         with open('naver_it_news.json', 'r', encoding='utf-8') as f:
             articles = json.load(f)
