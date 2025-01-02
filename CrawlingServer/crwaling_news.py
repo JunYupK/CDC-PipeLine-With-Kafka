@@ -83,9 +83,9 @@ async def naver_news_matadata_crwaler(url ,click_count=5):
 
 async def meta_crwaling(url):
     max_retries = 5
-    min_articles = 1
+    min_articles = 60
     current_retry = 0
-    click_count = 0
+    click_count = 3
 
     while current_retry < max_retries:
         print(f"\n시도 {current_retry + 1}/{max_retries}")
