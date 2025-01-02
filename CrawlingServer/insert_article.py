@@ -1,15 +1,17 @@
+import os
+
 import psycopg2
-from datetime import datetime
+from dotenv import load_dotenv
 
 
 def insert_article(article_data):
     # 데이터베이스 연결
     conn = psycopg2.connect(
-        dbname="source_db",
-        user="kjy",
-        password="home",
-        host="localhost",
-        port="5432"
+        dbname=os.getenv('DB_NAME'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        host=os.getenv('DB_HOST'),
+        port=os.getenv('DB_PORT')
     )
 
     try:
@@ -50,11 +52,11 @@ def insert_article(article_data):
 
 def insert_multiple_articles(articles):
     conn = psycopg2.connect(
-        dbname="source_db",
-        user="kjy",
-        password="home",
-        host="localhost",
-        port="5432"
+        dbname=os.getenv('DB_NAME'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        host=os.getenv('DB_HOST'),
+        port=os.getenv('DB_PORT')
     )
 
     try:

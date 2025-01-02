@@ -5,3 +5,4 @@ six>=1.10.0
 crawl4ai
 psycopg2-binary
 backoff
+python-dotenv

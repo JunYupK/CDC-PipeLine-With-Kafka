@@ -8,6 +8,7 @@ import schedule
 import time
 from pathlib import Path
 
+from config import Config
 from insert_article import insert_multiple_articles
 from crwaling_news import meta_crwaling as crawl_news
 from crawling_from_url import get_article as crawl_content
@@ -95,4 +96,5 @@ def main():
 
 
 if __name__ == "__main__":
+    #Config.validate()
     main()
