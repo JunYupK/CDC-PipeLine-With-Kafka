@@ -15,11 +15,11 @@ from crawling_from_url import get_article as crawl_content
 
 URLS = [
     ["정치","https://news.naver.com/section/100"],
-    {"경제" : "https://news.naver.com/section/101"},
-    {"사회" : "https://news.naver.com/section/102"},
-    {"생활/문화" : "https://news.naver.com/section/103"},
-    {"세계" : "https://news.naver.com/section/104"},
-    {"IT/과학" : "https://news.naver.com/section/105"}
+    ["경제","https://news.naver.com/section/101"],
+    ["사회","https://news.naver.com/section/102"],
+    ["생활/문화","https://news.naver.com/section/103"],
+    ["세계","https://news.naver.com/section/104"],
+    ["IT/과학","https://news.naver.com/section/105"]
 ]
 
 
