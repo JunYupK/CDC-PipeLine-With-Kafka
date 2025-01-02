@@ -9,12 +9,12 @@ from crwaling_news import meta_crwaling as crawl_news
 from crawling_from_url import get_article as crawl_content
 
 URLS = [
-    "https://news.naver.com/section/100",
-    "https://news.naver.com/section/101",
-    "https://news.naver.com/section/102",
-    "https://news.naver.com/section/103",
-    "https://news.naver.com/section/104",
-    "https://news.naver.com/section/105"
+    ["정치","https://news.naver.com/section/100"],
+    {"경제" : "https://news.naver.com/section/101"},
+    {"사회" : "https://news.naver.com/section/102"},
+    {"생활/문화" : "https://news.naver.com/section/103"},
+    {"세계" : "https://news.naver.com/section/104"},
+    {"IT/과학" : "https://news.naver.com/section/105"}
 ]
 
 
@@ -25,25 +25,25 @@ async def crawling_job():
     # ../data 디렉토리 경로 설정 및 생성
     data_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent / 'data'
     data_dir.mkdir(parents=True, exist_ok=True)
+    for category, url in URLS:
+        try:
+            print(f"\n크롤링 시작: {timestamp}")
 
-    try:
-        print(f"\n크롤링 시작: {timestamp}")
+            # 1단계: 뉴스 목록 크롤링
+            articles = await crawl_news(url)
 
-        # 1단계: 뉴스 목록 크롤링
-        articles = await crawl_news()
+            if articles:
+                # 타임스탬프가 포함된 파일명으로 직접 저장
+                news_file = data_dir / f'{category}_naver_it_news_{timestamp}.json'
+                with open(news_file, 'w', encoding='utf-8') as f:
+                    json.dump(articles, f, ensure_ascii=False, indent=2)
+                print(f"뉴스 목록 저장 완료: {news_file}")
 
-        if articles:
-            # 타임스탬프가 포함된 파일명으로 직접 저장
-            news_file = data_dir / f'naver_it_news_{timestamp}.json'
-            with open(news_file, 'w', encoding='utf-8') as f:
-                json.dump(articles, f, ensure_ascii=False, indent=2)
-            print(f"뉴스 목록 저장 완료: {news_file}")
+                # 2단계: 기사 내용 크롤링
+                await crawl_content(timestamp)
 
-            # 2단계: 기사 내용 크롤링
-            await crawl_content(timestamp)
-
-    except Exception as e:
-        print(f"크롤링 중 오류 발생: {str(e)}")
+        except Exception as e:
+            print(f"크롤링 중 오류 발생: {str(e)}")
 
 
 def run_crawling():
@@ -54,7 +54,7 @@ def main():
     print("크롤링 스케줄러 시작...")
 
     # 3시간마다 실행
-    schedule.every(2).hours.do(run_crawling)
+    schedule.every(3).hours.do(run_crawling)
 
     # 시작하자마자 첫 실행
     run_crawling()
