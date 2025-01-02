@@ -3,3 +3,4 @@
 CrawlingServer/venv/
 data/
 *.pyc
+postgres_data/

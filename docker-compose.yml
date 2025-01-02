@@ -10,7 +10,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
 
   # 타겟 데이터베이스 (MySQL)
@@ -50,6 +50,7 @@ services:
       - spark-master
     volumes:
       - ./spark-scripts:/opt/spark-scripts
+
   # KRaft 모드의 Kafka
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -67,6 +68,6 @@ services:
       # KRaft 모드 활성화
       KAFKA_METADATA_LOG_DIR: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'  # 클러스터 ID (임의의 값)
+
 volumes:
-  postgres_data:
   mysql_data:
