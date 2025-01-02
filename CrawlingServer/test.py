@@ -13,12 +13,12 @@ from crwaling_news import meta_crwaling as crawl_news
 from crawling_from_url import get_article as crawl_content
 
 URLS = [
-    ["정치","https://news.naver.com/section/100"],
-    {"경제" : "https://news.naver.com/section/101"},
-    {"사회" : "https://news.naver.com/section/102"},
-    {"생활/문화" : "https://news.naver.com/section/103"},
-    {"세계" : "https://news.naver.com/section/104"},
-    {"IT/과학" : "https://news.naver.com/section/105"}
+    ["정치","https://news.naver.com/section/100"]
+    # ["경제","https://news.naver.com/section/101"],
+    # ["사회","https://news.naver.com/section/102"],
+    # ["생활/문화","https://news.naver.com/section/103"],
+    # ["세계","https://news.naver.com/section/104"],
+    # ["IT/과학","https://news.naver.com/section/105"]
 ]
 
 
@@ -35,7 +35,6 @@ async def crawling_job():
 
             # 1단계: 뉴스 목록 크롤링
             articles = await crawl_news(url)
-
             if articles:
                 # 타임스탬프가 포함된 파일명으로 직접 저장
                 news_file = data_dir / f'{category}_naver_it_news_{timestamp}.json'
@@ -71,28 +70,13 @@ async def crawling_job():
                         print(f"{category} 카테고리 {len(articles_to_save)}개 기사 DB 저장 완료")
                     except Exception as e:
                         print(f"DB 저장 실패 (3회 재시도 후): {str(e)}")
+
         except Exception as e:
             print(f"크롤링 중 오류 발생: {str(e)}")
 
 
-def run_crawling():
-    asyncio.run(crawling_job())
 
-
-def main():
-    print("크롤링 스케줄러 시작...")
-
-    # 3시간마다 실행
-    schedule.every(3).hours.do(run_crawling)
-
-    # 시작하자마자 첫 실행
-    run_crawling()
-
-    # 스케줄 유지
-    while True:
-        schedule.run_pending()
-        time.sleep(60)  # 1분마다 스케줄 체크
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(crawling_job())

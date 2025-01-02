@@ -39,7 +39,7 @@ async def get_article_content(url, crawler):
         return None
 
 
-async def get_article(timestamp):
+async def get_article(timestamp, category):
     try:
         with open('naver_it_news.json', 'r', encoding='utf-8') as f:
             articles = json.load(f)
@@ -54,13 +54,17 @@ async def get_article(timestamp):
             content = await get_article_content(article['link'], crawler)
             if content:
                 article['content'] = content.strip()  # 앞뒤 공백 제거
+                article['stored_date'] = datetime.now().strftime("%Y%m%d")
+                article['category'] = category
+                article['img'] = None
                 print(f"기사 {i}/{len(articles)} 내용 수집 완료")
             await asyncio.sleep(1)  # 과도한 요청 방지
 
         data_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent / 'data'
-        news_file = data_dir / f'naver_it_news_{timestamp}.json'
+        news_file = data_dir / f'{category}_naver_news_with_contents_{timestamp}.json'
         with open(news_file, 'w', encoding='utf-8') as f:
             json.dump(articles, f, ensure_ascii=False, indent=2)
 
 
         print("\n모든 기사 내용 수집 완료")
+        return articles
