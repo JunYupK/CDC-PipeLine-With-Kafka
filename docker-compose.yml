@@ -17,7 +17,8 @@ services:
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
-
+    networks:
+      - app-network
   # 타겟 데이터베이스 (MySQL)
   mysql:
     image: mysql:latest
@@ -49,36 +50,42 @@ services:
       # KRaft 모드 활성화
       KAFKA_METADATA_LOG_DIR: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'  # 클러스터 ID (임의의 값)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+    networks:
+      - app-network
 
   # 스트리밍 처리를 위한 Debezium
   connect:
-    image: debezium/connect:2.5
-    ports:
-      - "8083:8083"
-    environment:
-      # JVM 힙 메모리 설정
-      KAFKA_HEAP_OPTS: "-Xms256M -Xmx1G"
-      # 스냅샷 관련 설정
-      snapshot.mode: "initial"  # 또는 "never"/"schema_only"
-      # 청크 사이즈 조정
-      snapshot.fetch.size: 1024
-
-      BOOTSTRAP_SERVERS: kafka:29092
-      GROUP_ID: "1"
-      CONFIG_STORAGE_TOPIC: connect_configs
-      OFFSET_STORAGE_TOPIC: connect_offsets
-      STATUS_STORAGE_TOPIC: connect_statuses
-      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-      # Postgres connection details
-      POSTGRES_HOST: "postgres"
-      POSTGRES_PORT: "5432"
-      POSTGRES_USER: "${POSTGRES_USER}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
-      POSTGRES_DB: "${POSTGRES_DB}"
-    depends_on:
-      - kafka
+      image: debezium/connect:2.5
+      ports:
+        - "8083:8083"
+      environment:
+        BOOTSTRAP_SERVERS: kafka:29092
+        GROUP_ID: "1"
+        CONFIG_STORAGE_TOPIC: connect_configs
+        OFFSET_STORAGE_TOPIC: connect_offsets
+        STATUS_STORAGE_TOPIC: connect_statuses
+        KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+        VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+        KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+        VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+        # 추가 설정
+        CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+        # 토픽 자동 생성 설정
+        KAFKA_CREATE_TOPICS: "connect_configs:1:1,connect_offsets:1:1,connect_statuses:1:1"
+        CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+        CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+        CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      depends_on:
+        - kafka
+      networks:
+        - app-network   # 네트워크 추가
 volumes:
   mysql_data:
+networks:
+  app-network:
+    driver: bridge

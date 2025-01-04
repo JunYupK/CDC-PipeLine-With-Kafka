@@ -4,14 +4,16 @@
         "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
         "database.hostname": "postgres",
         "database.port": "5432",
-        "database.user": "${POSTGRES_USER}",
-        "database.password": "${POSTGRES_PASSWORD}",
-        "database.dbname": "${POSTGRES_DB}",
+        "database.user": "KJY",
+        "database.password": "HomeSweetHome",
+        "database.dbname": "Naver_News",
         "table.include.list": "public.articles",
         "plugin.name": "pgoutput",
         "topic.prefix": "news",
-        "transforms": "unwrap",
-        "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
-        "transforms.unwrap.drop.tombstones": "false"
+        "database.server.name": "postgres-server",
+        "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+        "snapshot.mode": "initial",
+        "max.queue.size": "81290",
+        "max.batch.size": "20480"
     }
 }
