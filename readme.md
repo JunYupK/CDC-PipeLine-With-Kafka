@@ -68,7 +68,44 @@ graph LR;
 
 
 ```
+## 🔍 System Components
 
+### 1. Crawling Layer
+- **Crawl4AI**: Collects news data including articles, media files, and categories
+- Data Types:
+  - News Articles (titles, content, links)
+  - Media Files (images, videos)
+  - Category Information
+
+### 2. Source Database Layer (PostgreSQL)
+- **Core Tables**:
+  - articles: News article information
+  - media: Media file information
+  - categories: Category information
+- **CDC Mechanism**:
+  - article_changes: Change history tracking
+  - Triggers: Change detection
+  - WAL: Transaction logs
+
+### 3. Streaming Layer
+- **Debezium**:
+  - Connector: PostgreSQL WAL monitoring
+  - Serializer: Data serialization
+- **Apache Kafka**:
+  - Broker: Message queue management
+  - Topics: Dedicated topics per table
+
+### 4. Target Database Layer (MySQL)
+- **Synchronized Tables**:
+  - articles: News articles
+  - media: Media information
+  - categories: Categories
+
+## ✨ Key Features
+- Real-time data capture and synchronization
+- Reliable data transmission
+- Scalable architecture
+- Fault recovery mechanism
 
 <br>
 [Issues]
