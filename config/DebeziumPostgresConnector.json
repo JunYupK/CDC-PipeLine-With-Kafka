@@ -1,0 +1,17 @@
+{
+    "name": "articles-connector",
+    "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "database.hostname": "postgres",
+        "database.port": "5432",
+        "database.user": "${POSTGRES_USER}",
+        "database.password": "${POSTGRES_PASSWORD}",
+        "database.dbname": "${POSTGRES_DB}",
+        "table.include.list": "public.articles",
+        "plugin.name": "pgoutput",
+        "topic.prefix": "news",
+        "transforms": "unwrap",
+        "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+        "transforms.unwrap.drop.tombstones": "false"
+    }
+}

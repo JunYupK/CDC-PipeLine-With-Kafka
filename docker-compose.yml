@@ -9,6 +9,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
+    command: >
+      postgres 
+      -c wal_level=logical
+      -c max_wal_senders=10
+      -c max_replication_slots=10
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
@@ -26,30 +31,6 @@ services:
     volumes:
       - ./init-mysql:/docker-entrypoint-initdb.d
       - mysql_data:/var/lib/mysql
-
-  # Spark 마스터 노드
-  spark-master:
-    image: bitnami/spark:latest
-    environment:
-      - SPARK_MODE=master
-    ports:
-      - "8080:8080"  # UI
-      - "7077:7077"  # Spark 마스터 포트
-    volumes:
-      - ./spark-scripts:/opt/spark-scripts
-
-  # Spark 워커 노드
-  spark-worker:
-    image: bitnami/spark:latest
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=1G
-      - SPARK_WORKER_CORES=1
-    depends_on:
-      - spark-master
-    volumes:
-      - ./spark-scripts:/opt/spark-scripts
 
   # KRaft 모드의 Kafka
   kafka:
@@ -69,5 +50,35 @@ services:
       KAFKA_METADATA_LOG_DIR: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'  # 클러스터 ID (임의의 값)
 
+  # 스트리밍 처리를 위한 Debezium
+  connect:
+    image: debezium/connect:2.5
+    ports:
+      - "8083:8083"
+    environment:
+      # JVM 힙 메모리 설정
+      KAFKA_HEAP_OPTS: "-Xms256M -Xmx1G"
+      # 스냅샷 관련 설정
+      snapshot.mode: "initial"  # 또는 "never"/"schema_only"
+      # 청크 사이즈 조정
+      snapshot.fetch.size: 1024
+
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      # Postgres connection details
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    depends_on:
+      - kafka
 volumes:
   mysql_data:
