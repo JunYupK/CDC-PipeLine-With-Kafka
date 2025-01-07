@@ -6,3 +6,8 @@ crawl4ai
 psycopg2-binary
 backoff
 python-dotenv
+schedule
+prometheus-client
+asyncio
+backoff
+aiohttp
