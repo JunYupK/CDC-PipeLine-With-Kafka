@@ -15,6 +15,12 @@ async def get_article_content(url, crawler):  # crawler를 매개변수로 받�
                 "name": "content",
                 "selector": "#dic_area",
                 "type": "text"
+            },
+            {
+                "name": "article_images",
+                "selector": "#dic_area img",
+                "type": "attribute",
+                "attribute": "src"
             }
         ]
     }
@@ -55,12 +61,12 @@ async def get_article(timestamp, category):
         batch = articles[i:i + BATCH_SIZE]
         async with AsyncWebCrawler(headless=False, verbose=True) as crawler:
             for j, article in enumerate(batch, 1):
-                content = await get_article_content(article['link'], crawler)  # crawler 인스턴스 전달
-                if content:
-                    article['content'] = content.strip()
+                result = await get_article_content(article['link'], crawler)
+                if result:
+                    article['content'] = result['content'].strip()
                     article['stored_date'] = datetime.now().strftime("%Y%m%d")
                     article['category'] = category
-                    article['img'] = None
+                    article['img'] = result['images'][0] if result['images'] else None  # 첫 번째 이미지 URL 저장
                     print(f"기사 {i + j}/{len(articles)} 내용 수집 완료")
                 await asyncio.sleep(1)
 
