@@ -11,3 +11,4 @@ prometheus-client
 asyncio
 backoff
 aiohttp
+confluent-kafka
