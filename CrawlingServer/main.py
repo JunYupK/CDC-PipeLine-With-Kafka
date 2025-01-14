@@ -4,7 +4,7 @@ if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from prometheus_client import start_http_server
@@ -49,7 +49,13 @@ async def get_status():
         "articles_processed": crawler_service.get_articles_processed(),
         "success_rate": crawler_service.get_success_rate()
     }
-
+@app.post("/api/v1/crawl/stop")
+async def stop_crawl():
+    """실행 중인 크롤링 작업 중지"""
+    try:
+        return crawler_service.stop_crawling()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/v1/metrics")
 async def get_metrics():

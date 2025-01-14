@@ -97,6 +97,13 @@ class CrawlerService:
                           (self.ARTICLES_PROCESSED.labels(category=category)._value or 1)
                 for category, _ in self.URLS}
 
+    def stop_crawling(self):
+        if not self.is_crawling:
+            raise RuntimeError("No crawling job is currently running")
+
+        self.is_crawling = False
+        return {"message": "Crawling job stop requested"}
+
     def get_metrics(self):
         return {
             "crawl_time": self.CRAWL_TIME._collect(),
