@@ -1,8 +1,7 @@
 import os
 import psycopg2
 import backoff
-from ...config import Config
-
+from config import Config
 
 def get_db_connection():
     return psycopg2.connect(

@@ -21,3 +21,6 @@ class Config:
 
         if missing_vars:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+# Config 클래스를 명시적으로 export
+__all__ = ['Config']

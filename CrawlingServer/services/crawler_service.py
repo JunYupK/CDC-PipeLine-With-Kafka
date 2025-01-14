@@ -6,8 +6,8 @@ import asyncio
 import json
 import os
 
-from .db import save_to_db_with_retry
-from .crawlers import crawl_news, crawl_content
+from services.db import save_to_db_with_retry  # 절대 경로로 변경
+from services.crawlers import crawl_news, crawl_content
 
 
 class CrawlerService:
