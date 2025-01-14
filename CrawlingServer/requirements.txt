@@ -12,3 +12,4 @@ asyncio
 backoff
 aiohttp
 confluent-kafka
+apscheduler

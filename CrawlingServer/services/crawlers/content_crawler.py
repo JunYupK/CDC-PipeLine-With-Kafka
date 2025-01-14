@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+#crwaling_from_url
 async def get_article_content(url, crawler):  # crawler를 매개변수로 받도록 수정
     article_schema = {
         "name": "Article Content",
