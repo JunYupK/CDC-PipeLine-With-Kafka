@@ -37,7 +37,10 @@ async def get_article_content(url, crawler):  # crawler를 매개변수로 받�
 
         content = json.loads(result.extracted_content)
         if content and len(content) > 0:
-            return content[0].get("content", "")
+            return {
+                "content": content[0].get("content", ""),
+                "images": content[0].get("article_images", [])
+            }
         return None
 
     except Exception as e:
@@ -67,7 +70,7 @@ async def get_article(timestamp, category):
                     article['content'] = result['content'].strip()
                     article['stored_date'] = datetime.now().strftime("%Y%m%d")
                     article['category'] = category
-                    article['img'] = result['images'][0] if result['images'] else None  # 첫 번째 이미지 URL 저장
+                    article['img'] = result['images'][0] if result.get('images') else None
                     print(f"기사 {i + j}/{len(articles)} 내용 수집 완료")
                 await asyncio.sleep(1)
 
