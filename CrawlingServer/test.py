@@ -15,10 +15,10 @@ async def test_article_crawl(url):
                 "type": "text"
             },
             {
-                "name": "article_images",  # 새로운 필드 추가
-                "selector": "#dic_area img",  # #dic_area 내의 모든 img 태그 선택
-                "type": "attribute",  # 속성을 가져오기 위해 type을 attribute로 설정
-                "attribute": "src"    # src 속성을 가져옴
+                "name": "article_images",
+                "selector": "#dic_area img",
+                "type": "attribute",
+                "attribute": "src"
             }
         ]
     }
