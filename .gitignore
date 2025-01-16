@@ -3,5 +3,6 @@
 CrawlingServer/venv/
 data/
 *.pyc
-postgres_data/
-.env
+infra/postgres_data/
+infra/.env
+CrawlingServer/.env

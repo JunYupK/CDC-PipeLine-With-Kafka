@@ -1,35 +1,66 @@
-# services/crawler_service.py
-from prometheus_client import Counter, Histogram, Gauge, Summary
+from prometheus_client import Counter, Histogram, Gauge, Summary, CollectorRegistry, REGISTRY
 from datetime import datetime
 from pathlib import Path
 import asyncio
 import json
 import os
 
-from services.db import save_to_db_with_retry  # 절대 경로로 변경
+from services.db import save_to_db_with_retry
 from services.crawlers import crawl_news, crawl_content
 
 
 class CrawlerService:
-    def __init__(self):
-        self.URLS = [
-            ["정치", "https://news.naver.com/section/100"],
-            ["경제", "https://news.naver.com/section/101"],
-            ["사회", "https://news.naver.com/section/102"],
-            ["생활문화", "https://news.naver.com/section/103"],
-            ["세계", "https://news.naver.com/section/104"],
-            ["IT과학", "https://news.naver.com/section/105"]
-        ]
+    _instance = None
+    _registry = CollectorRegistry()
 
-        # Prometheus 메트릭 초기화
-        self.CRAWL_TIME = Histogram('crawl_duration_seconds', 'Time spent crawling', ['category'])
-        self.CRAWL_SUCCESS = Counter('crawl_success_total', 'Number of successful crawls', ['category'])
-        self.CRAWL_FAILURE = Counter('crawl_failure_total', 'Number of failed crawls', ['category'])
-        self.ARTICLES_PROCESSED = Counter('articles_processed_total', 'Number of articles processed', ['category'])
-        self.DB_OPERATION_TIME = Summary('db_operation_duration_seconds', 'Time spent on database operations',
-                                         ['operation_type', 'category'])
-        self.LAST_EXECUTION_TIME = Gauge('last_execution_timestamp', 'Last execution timestamp of the crawler',
-                                         ['category'])
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(CrawlerService, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, 'initialized'):
+            self.URLS = [
+                ["정치", "https://news.naver.com/section/100"],
+                ["경제", "https://news.naver.com/section/101"],
+                ["사회", "https://news.naver.com/section/102"],
+                ["생활문화", "https://news.naver.com/section/103"],
+                ["세계", "https://news.naver.com/section/104"],
+                ["IT과학", "https://news.naver.com/section/105"]
+            ]
+
+            # Prometheus 메트릭 초기화
+            self.CRAWL_TIME = Histogram('crawler_crawl_duration_seconds',
+                                        'Time spent crawling',
+                                        ['category'],
+                                        registry=self._registry)
+
+            self.CRAWL_SUCCESS = Counter('crawler_crawl_success_total',
+                                         'Number of successful crawls',
+                                         ['category'],
+                                         registry=self._registry)
+
+            self.CRAWL_FAILURE = Counter('crawler_crawl_failure_total',
+                                         'Number of failed crawls',
+                                         ['category'],
+                                         registry=self._registry)
+
+            self.ARTICLES_PROCESSED = Counter('crawler_articles_processed_total',
+                                              'Number of articles processed',
+                                              ['category'],
+                                              registry=self._registry)
+
+            self.DB_OPERATION_TIME = Summary('crawler_db_operation_duration_seconds',
+                                             'Time spent on database operations',
+                                             ['operation_type', 'category'],
+                                             registry=self._registry)
+
+            self.LAST_EXECUTION_TIME = Gauge('crawler_last_execution_timestamp',
+                                             'Last execution timestamp of the crawler',
+                                             ['category'],
+                                             registry=self._registry)
+
+            self.initialized = True
 
     async def crawling_job(self, target_category: str = None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -43,23 +74,20 @@ class CrawlerService:
                 print(f"\n크롤링 시작: {category} - {timestamp}")
 
                 with self.CRAWL_TIME.labels(category=category).time():
-                    # 1단계: 뉴스 목록 크롤링
                     articles = await crawl_news(url)
 
                     if articles:
-                        # 타임스탬프가 포함된 파일명으로 직접 저장
                         news_file = data_dir / f'{category}_naver_it_news_{timestamp}.json'
                         with open(news_file, 'w', encoding='utf-8') as f:
                             json.dump(articles, f, ensure_ascii=False, indent=2)
 
-                        # 2단계: 기사 내용 크롤링
                         result = await crawl_content(timestamp, category)
                         if result:
                             articles_to_save = [{
                                 "title": article["title"],
                                 "content": article["content"],
                                 "link": article["link"],
-                                "stored_date": timestamp[:8],  # YYYYMMDD 형식
+                                "stored_date": timestamp[:8],
                                 "category": category
                             } for article in result]
 
@@ -83,6 +111,12 @@ class CrawlerService:
             except Exception as e:
                 self.CRAWL_FAILURE.labels(category=category).inc()
                 print(f"크롤링 중 오류 발생: {str(e)}")
+
+    @classmethod
+    def get_registry(cls):
+        return cls._registry
+
+    # ... (나머지 메서드들은 그대로 유지)
 
     def get_last_execution(self):
         return {category: self.LAST_EXECUTION_TIME.labels(category=category)._value

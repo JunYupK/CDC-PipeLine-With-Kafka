@@ -18,20 +18,7 @@ services:
       - ./postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
     networks:
-      - app-network
-  # 타겟 데이터베이스 (MySQL)
-  mysql:
-    image: mysql:latest
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    ports:
-      - "13306:3306"
-    volumes:
-      - ./init-mysql:/docker-entrypoint-initdb.d
-      - mysql_data:/var/lib/mysql
+      - crawler-infra
 
   # KRaft 모드의 Kafka
   kafka:
@@ -47,45 +34,42 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      # KRaft 모드 활성화
       KAFKA_METADATA_LOG_DIR: '/tmp/kraft-combined-logs'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'  # 클러스터 ID (임의의 값)
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
     networks:
-      - app-network
+      - crawler-infra
 
-  # 스트리밍 처리를 위한 Debezium
+  # Debezium Connect
   connect:
-      image: debezium/connect:2.5
-      ports:
-        - "8083:8083"
-      environment:
-        BOOTSTRAP_SERVERS: kafka:29092
-        GROUP_ID: "1"
-        CONFIG_STORAGE_TOPIC: connect_configs
-        OFFSET_STORAGE_TOPIC: connect_offsets
-        STATUS_STORAGE_TOPIC: connect_statuses
-        KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-        VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-        KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-        VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-        # 추가 설정
-        CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
-        # 토픽 자동 생성 설정
-        KAFKA_CREATE_TOPICS: "connect_configs:1:1,connect_offsets:1:1,connect_statuses:1:1"
-        CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-        CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-        CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
-      depends_on:
-        - kafka
-      networks:
-        - app-network   # 네트워크 추가
+    image: debezium/connect:2.5
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+      KAFKA_CREATE_TOPICS: "connect_configs:1:1,connect_offsets:1:1,connect_statuses:1:1"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+    depends_on:
+      - kafka
+    networks:
+      - crawler-infra
 
-  # Prometheus 추가
+  # Prometheus (메트릭 수집)
   prometheus:
     image: prom/prometheus:latest
     ports:
@@ -99,9 +83,9 @@ services:
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
     networks:
-      - app-network
+      - crawler-infra
 
-  # Grafana 추가
+  # Grafana (시각화)
   grafana:
     image: grafana/grafana:latest
     ports:
@@ -109,19 +93,21 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/dashboards/crawler-dashboard.json
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/provisioning/dashboards:/etc/grafana/dashboards
     depends_on:
       - prometheus
     networks:
-      - app-network
-
+      - crawler-infra
 
 volumes:
-  mysql_data:
   prometheus_data:
   grafana_data:
+
 networks:
-  app-network:
+  crawler-infra:
+    name: crawler-infra-network
     driver: bridge

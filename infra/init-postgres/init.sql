@@ -14,9 +14,9 @@ CREATE TABLE keywords (
    UNIQUE(word)
 );
 
--- 뉴스 아티클 테이블
+-- 뉴스 아티클 테이블 (파티셔닝 적용)
 CREATE TABLE articles (
-   id BIGSERIAL PRIMARY KEY,
+   id BIGSERIAL,
    title TEXT NOT NULL,
    content TEXT NOT NULL,
    link TEXT NOT NULL,
@@ -33,18 +33,25 @@ CREATE TABLE articles (
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
    version INTEGER DEFAULT 1,
-   is_deleted BOOLEAN DEFAULT FALSE
+   is_deleted BOOLEAN DEFAULT FALSE,
+   PRIMARY KEY (id, stored_date)
 ) PARTITION BY RANGE (stored_date);
+
+-- 초기 파티션 생성 (2025년 1월)
+CREATE TABLE articles_202501 PARTITION OF articles
+    FOR VALUES FROM ('20250101') TO ('20250201');
 
 -- 멀티미디어 테이블
 CREATE TABLE media (
    id BIGSERIAL PRIMARY KEY,
-   article_id BIGINT REFERENCES articles(id),
+   article_id BIGINT,
+   stored_date CHAR(8),
    type VARCHAR(20) NOT NULL,
    url TEXT NOT NULL,
    caption TEXT,
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+   FOREIGN KEY (article_id, stored_date) REFERENCES articles (id, stored_date)
 );
 
 -- CDC 추적을 위한 변경 이력 테이블
@@ -59,32 +66,40 @@ CREATE TABLE article_changes (
 
 -- 기사-키워드 연결 테이블
 CREATE TABLE article_keywords (
-   article_id BIGINT REFERENCES articles(id),
+   article_id BIGINT,
+   stored_date CHAR(8),
    keyword_id INTEGER REFERENCES keywords(id),
    frequency INTEGER NOT NULL DEFAULT 1,
    importance_score FLOAT,
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-   PRIMARY KEY (article_id, keyword_id)
+   PRIMARY KEY (article_id, keyword_id),
+   FOREIGN KEY (article_id, stored_date) REFERENCES articles (id, stored_date)
 );
 
 -- 요약 테이블
 CREATE TABLE article_summaries (
    id BIGSERIAL PRIMARY KEY,
-   article_id BIGINT REFERENCES articles(id),
+   article_id BIGINT,
+   stored_date CHAR(8),
    summary_text TEXT NOT NULL,
    summary_type VARCHAR(20) NOT NULL, -- 'short', 'long' 등
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+   FOREIGN KEY (article_id, stored_date) REFERENCES articles (id, stored_date)
 );
 
 -- 관련 기사 테이블
 CREATE TABLE related_articles (
-   source_article_id BIGINT REFERENCES articles(id),
-   related_article_id BIGINT REFERENCES articles(id),
+   source_article_id BIGINT,
+   source_stored_date CHAR(8),
+   related_article_id BIGINT,
+   related_stored_date CHAR(8),
    relation_type VARCHAR(50), -- 'similar_topic', 'same_event' 등
    similarity_score FLOAT,
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-   PRIMARY KEY (source_article_id, related_article_id)
+   PRIMARY KEY (source_article_id, related_article_id),
+   FOREIGN KEY (source_article_id, source_stored_date) REFERENCES articles (id, stored_date),
+   FOREIGN KEY (related_article_id, related_stored_date) REFERENCES articles (id, stored_date)
 );
 
 -- update_timestamp 함수 생성
@@ -126,12 +141,24 @@ CREATE TRIGGER article_changes_trigger
    FOR EACH ROW
    EXECUTE FUNCTION log_article_changes();
 
--- 인덱스 생성
+
+-- 인덱스 생성 (전문 검색 인덱스는 일단 제외하고 나머지만 생성)
 CREATE INDEX idx_articles_category ON articles(category_id);
 CREATE INDEX idx_articles_published_at ON articles(published_at);
 CREATE INDEX idx_articles_stored_date ON articles(stored_date);
-CREATE INDEX idx_media_article ON media(article_id);
+CREATE INDEX idx_media_article ON media(article_id, stored_date);
 CREATE INDEX idx_article_changes_article ON article_changes(article_id);
 CREATE INDEX idx_article_keywords_keyword ON article_keywords(keyword_id);
 CREATE INDEX idx_keywords_word ON keywords(word);
-CREATE INDEX idx_articles_title_content ON articles USING gin(to_tsvector('korean', title || ' ' || content));
+
+-- 기본 텍스트 검색 인덱스 생성 (english 설정 사용)
+CREATE INDEX idx_articles_title_content ON articles USING gin(to_tsvector('english', title || ' ' || content));
+
+-- 초기 카테고리 데이터 삽입
+INSERT INTO categories (name) VALUES
+    ('정치'),
+    ('경제'),
+    ('사회'),
+    ('생활문화'),
+    ('세계'),
+    ('IT과학');
