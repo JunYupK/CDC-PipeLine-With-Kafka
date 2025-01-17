@@ -6,3 +6,4 @@ data/
 infra/postgres_data/
 infra/.env
 CrawlingServer/.env
+.env

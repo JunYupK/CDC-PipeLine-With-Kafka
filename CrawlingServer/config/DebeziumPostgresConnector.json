@@ -14,6 +14,10 @@
         "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
         "snapshot.mode": "initial",
         "max.queue.size": "81290",
-        "max.batch.size": "20480"
+        "max.batch.size": "20480",
+        "slot.name": "articles_slot",
+        "publication.name": "articles_pub",
+        "decimal.handling.mode": "string",
+        "heartbeat.interval.ms": "5000"
     }
 }

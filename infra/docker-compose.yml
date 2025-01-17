@@ -1,6 +1,6 @@
 version: '3'
 services:
-  # 소스 데이터베이스 (PostgreSQL)
+  # PostgreSQL
   postgres:
     image: postgres:latest
     environment:
@@ -9,18 +9,21 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
-    command: >
-      postgres 
-      -c wal_level=logical
-      -c max_wal_senders=10
-      -c max_replication_slots=10
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
     networks:
       - crawler-infra
 
-  # KRaft 모드의 Kafka
+  # Kafka
   kafka:
     image: confluentinc/cp-kafka:latest
     ports:
@@ -50,26 +53,31 @@ services:
     ports:
       - "8083:8083"
     environment:
-      BOOTSTRAP_SERVERS: kafka:29092
+      BOOTSTRAP_SERVERS: "kafka:29092"
       GROUP_ID: "1"
-      CONFIG_STORAGE_TOPIC: connect_configs
-      OFFSET_STORAGE_TOPIC: connect_offsets
-      STATUS_STORAGE_TOPIC: connect_statuses
-      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONFIG_STORAGE_TOPIC: "connect_configs"
+      OFFSET_STORAGE_TOPIC: "connect_offsets"
+      STATUS_STORAGE_TOPIC: "connect_statuses"
+      KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
       KEY_CONVERTER_SCHEMAS_ENABLE: "false"
       VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
       CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
-      KAFKA_CREATE_TOPICS: "connect_configs:1:1,connect_offsets:1:1,connect_statuses:1:1"
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_DATABASE_HOSTNAME: "postgres"
+      CONNECT_DATABASE_PORT: "5432"
+      CONNECT_DATABASE_USER: ${POSTGRES_USER}
+      CONNECT_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      CONNECT_DATABASE_DBNAME: ${POSTGRES_DB}
     depends_on:
       - kafka
+      - postgres
     networks:
       - crawler-infra
 
-  # Prometheus (메트릭 수집)
+  # Prometheus
   prometheus:
     image: prom/prometheus:latest
     ports:
@@ -85,7 +93,7 @@ services:
     networks:
       - crawler-infra
 
-  # Grafana (시각화)
+  # Grafana
   grafana:
     image: grafana/grafana:latest
     ports:
@@ -100,6 +108,27 @@ services:
       - ./grafana/provisioning/dashboards:/etc/grafana/dashboards
     depends_on:
       - prometheus
+    networks:
+      - crawler-infra
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    networks:
+      - crawler-infra
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter
+    command:
+      - '--kafka.server=kafka:29092'
+    ports:
+      - "9308:9308"
+    depends_on:
+      - kafka
     networks:
       - crawler-infra
 
