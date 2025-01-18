@@ -13,12 +13,12 @@ scrape_configs:
     static_configs:
       - targets: ['redis-exporter:9121']
 
-  # PostgreSQL 메트릭
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['postgres-exporter:9187']
-
-  # Kafka 메트릭
   - job_name: 'kafka'
     static_configs:
       - targets: ['kafka-exporter:9308']
+    scrape_interval: 5s
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 5s

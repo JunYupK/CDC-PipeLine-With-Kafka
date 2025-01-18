@@ -1,14 +1,12 @@
 version: '3'
+
 services:
-  # PostgreSQL
   postgres:
     image: postgres:latest
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
     command:
       - "postgres"
       - "-c"
@@ -17,13 +15,19 @@ services:
       - "max_wal_senders=10"
       - "-c"
       - "max_replication_slots=10"
+    ports:
+      - "5432:5432"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
     networks:
       - crawler-infra
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # Kafka
   kafka:
     image: confluentinc/cp-kafka:latest
     ports:
@@ -44,10 +48,17 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     networks:
       - crawler-infra
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  # Debezium Connect
   connect:
     image: debezium/connect:2.5
     ports:
@@ -74,10 +85,10 @@ services:
     depends_on:
       - kafka
       - postgres
+    restart: on-failure
     networks:
       - crawler-infra
 
-  # Prometheus
   prometheus:
     image: prom/prometheus:latest
     ports:
@@ -93,7 +104,6 @@ services:
     networks:
       - crawler-infra
 
-  # Grafana
   grafana:
     image: grafana/grafana:latest
     ports:
@@ -110,16 +120,28 @@ services:
       - prometheus
     networks:
       - crawler-infra
+
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.11.1
+    command:
+      - '--no-collector.bgwriter'
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      PG_EXPORTER_DISABLE_DEFAULT_METRICS: "true"
+      PG_EXPORTER_EXCLUDE_DATABASES: "template0,template1"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres_exporter/queries.yaml"
+      PG_EXPORTER_DISABLE_SETTINGS_METRICS: "true"
+      PG_EXPORTER_AUTO_DISCOVER_DATABASES: "false"
     ports:
       - "9187:9187"
+    volumes:
+      - ./postgres_exporter:/etc/postgres_exporter
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - crawler-infra
+
 
   kafka-exporter:
     image: danielqsj/kafka-exporter
@@ -129,12 +151,14 @@ services:
       - "9308:9308"
     depends_on:
       - kafka
+    restart: on-failure
     networks:
       - crawler-infra
 
 volumes:
   prometheus_data:
   grafana_data:
+  postgres_data:
 
 networks:
   crawler-infra:

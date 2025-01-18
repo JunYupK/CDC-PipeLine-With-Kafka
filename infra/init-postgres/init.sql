@@ -1,3 +1,28 @@
+-- 필요한 확장 설치
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+-- postgres_exporter 사용자 생성 및 권한 설정
+CREATE USER postgres_exporter WITH PASSWORD 'password' SUPERUSER;
+ALTER USER postgres_exporter SET search_path TO pg_catalog, public;
+
+-- 시스템 카탈로그 뷰에 대한 명시적 권한 부여
+GRANT SELECT ON pg_stat_database TO postgres_exporter;
+GRANT SELECT ON pg_stat_bgwriter TO postgres_exporter;
+GRANT SELECT ON pg_stat_archiver TO postgres_exporter;
+GRANT SELECT ON pg_stat_activity TO postgres_exporter;
+GRANT SELECT ON pg_stat_replication TO postgres_exporter;
+GRANT SELECT ON pg_stat_wal_receiver TO postgres_exporter;
+GRANT SELECT ON pg_stat_database_conflicts TO postgres_exporter;
+GRANT SELECT ON pg_stat_user_tables TO postgres_exporter;
+GRANT SELECT ON pg_stat_user_indexes TO postgres_exporter;
+GRANT SELECT ON pg_statio_user_tables TO postgres_exporter;
+GRANT SELECT ON pg_statio_user_indexes TO postgres_exporter;
+GRANT SELECT ON pg_stat_statements TO postgres_exporter;
+
+-- 모든 현재 및 미래의 테이블에 대한 SELECT 권한 부여
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO postgres_exporter;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO postgres_exporter;
+
+-- 기존 테이블 생성 스크립트
 -- 카테고리 테이블
 CREATE TABLE categories (
    id SERIAL PRIMARY KEY,
@@ -58,7 +83,7 @@ CREATE TABLE media (
 CREATE TABLE article_changes (
    id BIGSERIAL PRIMARY KEY,
    article_id BIGINT NOT NULL,
-   operation VARCHAR(10) NOT NULL, -- INSERT, UPDATE, DELETE
+   operation VARCHAR(10) NOT NULL,
    changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
    old_data JSONB,
    new_data JSONB
@@ -82,7 +107,7 @@ CREATE TABLE article_summaries (
    article_id BIGINT,
    stored_date CHAR(8),
    summary_text TEXT NOT NULL,
-   summary_type VARCHAR(20) NOT NULL, -- 'short', 'long' 등
+   summary_type VARCHAR(20) NOT NULL,
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
    FOREIGN KEY (article_id, stored_date) REFERENCES articles (id, stored_date)
@@ -94,7 +119,7 @@ CREATE TABLE related_articles (
    source_stored_date CHAR(8),
    related_article_id BIGINT,
    related_stored_date CHAR(8),
-   relation_type VARCHAR(50), -- 'similar_topic', 'same_event' 등
+   relation_type VARCHAR(50),
    similarity_score FLOAT,
    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
    PRIMARY KEY (source_article_id, related_article_id),
@@ -141,8 +166,7 @@ CREATE TRIGGER article_changes_trigger
    FOR EACH ROW
    EXECUTE FUNCTION log_article_changes();
 
-
--- 인덱스 생성 (전문 검색 인덱스는 일단 제외하고 나머지만 생성)
+-- 인덱스 생성
 CREATE INDEX idx_articles_category ON articles(category_id);
 CREATE INDEX idx_articles_published_at ON articles(published_at);
 CREATE INDEX idx_articles_stored_date ON articles(stored_date);
@@ -162,3 +186,7 @@ INSERT INTO categories (name) VALUES
     ('생활문화'),
     ('세계'),
     ('IT과학');
+
+-- postgres_exporter 사용자에게 추가 테이블 권한 부여
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO postgres_exporter;
+ALTER USER postgres_exporter SET SEARCH_PATH TO public;

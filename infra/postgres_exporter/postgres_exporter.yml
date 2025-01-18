@@ -1,0 +1,21 @@
+queries:
+  pg_stat:
+    query: |
+      SELECT
+        CAST(pg_stat_get_bgwriter_buf_written_clean() AS BIGINT) as bgwriter_buffers_clean,
+        CAST(pg_stat_get_checkpointer_buffers_written() AS BIGINT) as checkpointer_buffers_written,
+        CAST(pg_stat_get_checkpointer_write_time() AS FLOAT) as checkpointer_write_time,
+        CAST(pg_stat_get_checkpointer_sync_time() AS FLOAT) as checkpointer_sync_time
+    metrics:
+      - bgwriter_buffers_clean:
+          usage: "COUNTER"
+          description: "Number of buffers written by the background writer"
+      - checkpointer_buffers_written:
+          usage: "COUNTER"
+          description: "Number of buffers written by the checkpointer"
+      - checkpointer_write_time:
+          usage: "COUNTER"
+          description: "Total amount of time spent writing checkpoints to disk"
+      - checkpointer_sync_time:
+          usage: "COUNTER"
+          description: "Total amount of time spent syncing checkpoints to disk"

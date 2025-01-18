@@ -1,0 +1,12 @@
+pg_custom_stats:
+  query: |
+    SELECT
+      CAST(pg_stat_get_bgwriter_buf_written_clean() AS BIGINT) as buffers_clean_total,
+      CAST(pg_stat_get_checkpointer_buffers_written() AS BIGINT) as buffers_written_total
+  metrics:
+    - buffers_clean_total:
+        usage: "COUNTER"
+        description: "Total number of buffers written by background writer"
+    - buffers_written_total:
+        usage: "COUNTER"
+        description: "Total number of buffers written by checkpointer"
