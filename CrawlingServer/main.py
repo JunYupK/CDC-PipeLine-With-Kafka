@@ -44,8 +44,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="News Crawler API", lifespan=lifespan)
 
 
-# ... (나머지 라우트 핸들러들은 그대로 유지)
-
 
 @app.post("/api/v1/crawl")
 async def trigger_crawl(background_tasks: BackgroundTasks, category: Optional[str] = None):
@@ -58,6 +56,7 @@ async def trigger_crawl(background_tasks: BackgroundTasks, category: Optional[st
 async def get_status():
     """크롤링 상태 조회"""
     return {
+        "crawling_status": crawler_service.get_crawling_status(),
         "last_execution": crawler_service.get_last_execution(),
         "articles_processed": crawler_service.get_articles_processed(),
         "success_rate": crawler_service.get_success_rate()
