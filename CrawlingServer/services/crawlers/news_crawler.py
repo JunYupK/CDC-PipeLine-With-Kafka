@@ -64,7 +64,7 @@ async def naver_news_matadata_crwaler(url ,click_count=5):
     """
 
     try:
-        async with AsyncWebCrawler(headless=False, verbose=True) as crawler:
+        async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
             result = await crawler.arun(
                 url=url,
                 js_code=preload_js,
@@ -83,7 +83,7 @@ async def naver_news_matadata_crwaler(url ,click_count=5):
 
 async def meta_crwaling(url):
     max_retries = 5
-    min_articles = 60
+    min_articles = 30
     current_retry = 0
     click_count = 3
 

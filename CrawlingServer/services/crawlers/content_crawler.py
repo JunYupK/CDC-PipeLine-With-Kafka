@@ -63,7 +63,7 @@ async def get_article(timestamp, category):
     # 배치 단위로 처리
     for i in range(0, len(articles), BATCH_SIZE):
         batch = articles[i:i + BATCH_SIZE]
-        async with AsyncWebCrawler(headless=False, verbose=True) as crawler:
+        async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
             for j, article in enumerate(batch, 1):
                 result = await get_article_content(article['link'], crawler)
                 if result:

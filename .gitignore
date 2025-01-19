@@ -6,4 +6,5 @@ data/
 infra/postgres_data/
 infra/.env
 CrawlingServer/.env
+CrawlingServer/naver_it_news.json
 .env
