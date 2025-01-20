@@ -36,7 +36,7 @@ class CrawlerService:
             self.current_category: Optional[str] = None
             self.crawl_start_time: Optional[datetime] = None
             self.error_count: Dict[str, int] = {category: 0 for category, _ in self.URLS}
-
+            self.current_task: Optional[asyncio.Task] = None
             # Prometheus 메트릭 초기화
             self._init_metrics()
 
@@ -110,6 +110,8 @@ class CrawlerService:
         self.current_category = target_category
         self.crawl_start_time = datetime.now()
         timestamp = self.crawl_start_time.strftime("%Y%m%d_%H%M%S")
+        # 현재 태스크 저장
+        self.current_task = asyncio.current_task()
 
         try:
             data_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent / 'data'
@@ -168,11 +170,14 @@ class CrawlerService:
 
                 finally:
                     self.CRAWL_STATUS.labels(category=category).set(0)
-
+        except asyncio.CancelledError:
+            print("크롤링 작업이 취소되었습니다.")
+            raise
         finally:
             self.is_crawling = False
             self.current_category = None
             self.crawl_start_time = None
+            self.current_task = None
 
     def get_crawling_status(self) -> Dict[str, Any]:
         """현재 크롤링 상태 조회"""
@@ -211,11 +216,17 @@ class CrawlerService:
 
     def stop_crawling(self) -> Dict[str, str]:
         """현재 실행 중인 크롤링 작업 중지"""
-        if not self.is_crawling:
+        if not self.is_crawling or not self.current_task:
             raise RuntimeError("No crawling job is currently running")
 
-        self.is_crawling = False
-        return {"message": "Crawling job stop requested"}
+        try:
+            # 실행 중인 태스크 취소
+            if not self.current_task.done():
+                self.current_task.cancel()
+
+            return {"message": "Crawling job stop requested"}
+        except Exception as e:
+            raise RuntimeError(f"Failed to stop crawling: {str(e)}")
 
     def get_metrics(self) -> Dict[str, Any]:
         """모든 Prometheus 메트릭 수집"""

@@ -65,7 +65,10 @@ async def get_status():
 async def stop_crawl():
     """실행 중인 크롤링 작업 중지"""
     try:
-        return crawler_service.stop_crawling()
+        result = crawler_service.stop_crawling()
+        # 실제로 태스크가 취소될 때까지 짧게 대기
+        await asyncio.sleep(1)
+        return result
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

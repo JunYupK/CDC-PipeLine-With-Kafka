@@ -64,6 +64,10 @@ async def get_article(timestamp, category):
     for i in range(0, len(articles), BATCH_SIZE):
         batch = articles[i:i + BATCH_SIZE]
         async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
+            if asyncio.current_task().cancelled():
+                print("크롤링이 취소되었습니다.")
+                return 0, None
+
             for j, article in enumerate(batch, 1):
                 result = await get_article_content(article['link'], crawler)
                 if result:
