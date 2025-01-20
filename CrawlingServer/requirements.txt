@@ -13,3 +13,4 @@ backoff
 aiohttp
 confluent-kafka
 apscheduler
+playwright==1.40.0
