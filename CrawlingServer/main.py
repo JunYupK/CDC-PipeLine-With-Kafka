@@ -2,6 +2,7 @@ import asyncio
 import sys
 import threading
 
+
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -13,6 +14,8 @@ from typing import Optional
 from wsgiref.simple_server import make_server
 
 from services.crawler_service import CrawlerService
+from services.db.postgres import get_db_connection
+
 from config import Config
 
 scheduler = AsyncIOScheduler()
@@ -77,6 +80,98 @@ async def get_metrics():
     """Prometheus 메트릭 조회"""
     return crawler_service.get_metrics()
 
+
+@app.get("/api/v1/health/db")
+async def check_database():
+    """DB 연결 상태 확인"""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute('SELECT 1')
+            result = cur.fetchone()
+
+        conn.close()
+        return {
+            "status": "healthy",
+            "message": "Database connection successful"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database connection failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/articles/stats")
+async def get_article_stats():
+    """DB에 저장된 기사 통계 조회"""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            # 전체 통계
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as total_articles,
+                    COUNT(DISTINCT category) as category_count,
+                    COUNT(DISTINCT stored_date) as date_count
+                FROM articles
+            """)
+            total_stats = cur.fetchone()
+
+            # 카테고리별 통계
+            cur.execute("""
+                SELECT 
+                    category,
+                    COUNT(*) as article_count,
+                    MIN(stored_date) as earliest_date,
+                    MAX(stored_date) as latest_date
+                FROM articles
+                GROUP BY category
+            """)
+            category_stats = cur.fetchall()
+
+            # 최근 날짜별 통계
+            cur.execute("""
+                SELECT 
+                    stored_date,
+                    COUNT(*) as article_count
+                FROM articles
+                GROUP BY stored_date
+                ORDER BY stored_date DESC
+                LIMIT 7
+            """)
+            daily_stats = cur.fetchall()
+
+        conn.close()
+
+        return {
+            "overall": {
+                "total_articles": total_stats[0],
+                "total_categories": total_stats[1],
+                "total_dates": total_stats[2]
+            },
+            "by_category": [
+                {
+                    "category": cat[0],
+                    "article_count": cat[1],
+                    "earliest_date": cat[2],
+                    "latest_date": cat[3]
+                }
+                for cat in category_stats
+            ],
+            "recent_daily": [
+                {
+                    "date": date[0],
+                    "article_count": date[1]
+                }
+                for date in daily_stats
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get article stats: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn

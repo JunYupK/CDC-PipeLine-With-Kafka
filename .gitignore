@@ -1,10 +1,16 @@
+# IDE
 .idea/
-./CrawlingServer/venv__pycache__/
-CrawlingServer/venv/
-data/
+
+# Python
+__pycache__/
 *.pyc
-infra/postgres_data/
-infra/.env
-CrawlingServer/.env
-CrawlingServer/naver_it_news.json
+**/venv/
+
+# Project specific
+/data/
+**/postgres_data/
+**/naver_it_news.json
+
+# Environment variables
+**/.env
 .env
