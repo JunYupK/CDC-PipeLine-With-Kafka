@@ -16,3 +16,4 @@ CrawlingServer/data/
 # Environment variables
 **/.env
 .env
+./config/*
