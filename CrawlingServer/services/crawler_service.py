@@ -44,54 +44,14 @@ class CrawlerService:
 
     def _init_metrics(self) -> None:
         """Prometheus 메트릭 초기화"""
-        self.CRAWL_TIME = Histogram(
-            'crawler_crawl_duration_seconds',
-            'Time spent crawling',
-            ['category'],
-            registry=self._registry
-        )
-
-        self.CRAWL_SUCCESS = Counter(
-            'crawler_crawl_success_total',
-            'Number of successful crawls',
-            ['category'],
-            registry=self._registry
-        )
-
-        self.CRAWL_FAILURE = Counter(
-            'crawler_crawl_failure_total',
-            'Number of failed crawls',
-            ['category'],
-            registry=self._registry
-        )
-
-        self.ARTICLES_PROCESSED = Counter(
-            'crawler_articles_processed_total',
-            'Number of articles processed',
-            ['category'],
-            registry=self._registry
-        )
-
-        self.DB_OPERATION_TIME = Summary(
-            'crawler_db_operation_duration_seconds',
-            'Time spent on database operations',
-            ['operation_type', 'category'],
-            registry=self._registry
-        )
-
-        self.LAST_EXECUTION_TIME = Gauge(
-            'crawler_last_execution_timestamp',
-            'Last execution timestamp of the crawler',
-            ['category'],
-            registry=self._registry
-        )
-
-        self.CRAWL_STATUS = Gauge(
-            'crawler_is_running',
-            'Whether the crawler is currently running',
-            ['category'],
-            registry=self._registry
-        )
+        # 기존 메트릭 초기화
+        for category, _ in self.URLS:
+            # 초기값 설정
+            self.CRAWL_STATUS.labels(category=category).set(0)
+            self.LAST_EXECUTION_TIME.labels(category=category).set(0)
+            self.ARTICLES_PROCESSED.labels(category=category).inc(0)
+            self.CRAWL_SUCCESS.labels(category=category).inc(0)
+            self.CRAWL_FAILURE.labels(category=category).inc(0)
 
     async def crawling_job(self, target_category: Optional[str] = None) -> None:
         """
@@ -110,7 +70,6 @@ class CrawlerService:
         self.current_category = target_category
         self.crawl_start_time = datetime.now()
         timestamp = self.crawl_start_time.strftime("%Y%m%d_%H%M%S")
-        # 현재 태스크 저장
         self.current_task = asyncio.current_task()
 
         try:
