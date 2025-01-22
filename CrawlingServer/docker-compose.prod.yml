@@ -85,7 +85,6 @@ services:
     restart: always
     security_opt:
       - no-new-privileges:true
-    user: nobody
     logging:
       driver: "json-file"
       options:
