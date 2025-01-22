@@ -44,6 +44,54 @@ class CrawlerService:
 
     def _init_metrics(self) -> None:
         """Prometheus 메트릭 초기화"""
+        self.CRAWL_STATUS = Gauge(
+            'crawl_status',
+            'Crawler status for different categories',
+            ['category'],
+            registry=self._registry
+        )
+
+        self.LAST_EXECUTION_TIME = Gauge(
+            'last_execution_time',
+            'Last execution time for each category',
+            ['category'],
+            registry=self._registry
+        )
+
+        self.ARTICLES_PROCESSED = Counter(
+            'articles_processed',
+            'Number of articles processed per category',
+            ['category'],
+            registry=self._registry
+        )
+
+        self.CRAWL_SUCCESS = Counter(
+            'crawl_success',
+            'Number of successful crawls per category',
+            ['category'],
+            registry=self._registry
+        )
+
+        self.CRAWL_FAILURE = Counter(
+            'crawl_failure',
+            'Number of failed crawls per category',
+            ['category'],
+            registry=self._registry
+        )
+
+        self.CRAWL_TIME = Histogram(
+            'crawl_time',
+            'Time taken to crawl each category',
+            ['category'],
+            registry=self._registry
+        )
+
+        self.DB_OPERATION_TIME = Histogram(
+            'db_operation_time',
+            'Time taken for database operations',
+            ['operation_type', 'category'],
+            registry=self._registry
+        )
         # 기존 메트릭 초기화
         for category, _ in self.URLS:
             # 초기값 설정

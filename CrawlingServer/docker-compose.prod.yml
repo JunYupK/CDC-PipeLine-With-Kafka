@@ -6,8 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     expose:
-      - "8080"
-      - "8000"
+      - "8080:8080"
+      - "8000:8000"
     environment:
       - REDIS_HOST=redis.internal
       - REDIS_PORT=6379
