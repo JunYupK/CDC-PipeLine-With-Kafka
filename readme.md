@@ -7,64 +7,112 @@ Crwal4AI를 활용하여 크롤링 진행 후 이를 DB에 저장한 후 debeziu
 ## 🏗️ Architecture
 
 ```mermaid
-graph LR;
-    subgraph CrawlingLayer[🤖 Crawling Layer]
-        C[(Crawl4AI)]
-        subgraph CrawlData[Crawled Data]
-            CD1[📰 News Articles]
-            CD2[🖼️ Media Files]
-            CD3[📑 Categories]
+flowchart TB
+    %% GitHub Section
+    subgraph CI_CD["⚡ Continuous Integration & Deployment"]
+        subgraph GitHub["GitHub Repository"]
+            direction LR
+            code["💻 Source Code"]
+            actions["🚀 GitHub Actions"]
+            code -.->|Trigger| actions
         end
     end
 
-    subgraph SourceDB[📊 Source Database Layer]
-        subgraph PostgreSQL[PostgreSQL Database]
-            PG[(PostgreSQL)]
-            subgraph Tables[Tables]
-                T1[articles]
-                T2[media]
-                T3[categories]
+    %% GCP Section
+    subgraph GCP["☁️ Google Cloud Platform"]
+        %% Crawler VM
+        subgraph CrawlerVM["News-Crawler Server"]
+            direction TB
+            subgraph API["Web API Service"]
+                direction LR
+                fastapi["⚡ FastAPI"]
             end
-            subgraph CDC[CDC Mechanism]
-                CT[article_changes]
-                TG[Triggers]
-                WAL[Write-Ahead Logs]
+            
+            subgraph Crawler["News Crawler Engine"]
+                direction LR
+                crawler["🕷️ Crawler"]
+                playwright["🎭 Playwright"]
+                crawler --> playwright
+            end
+
+            subgraph CacheLayer["Cache System"]
+                direction LR
+                redis[("🔸 Redis")]
+                redis_exp["📡 Metrics"]
+                redis --- redis_exp
+            end
+        end
+
+        %% Infra VM
+        subgraph InfraVM["News-Infra Server"]
+            direction TB
+            subgraph DB["Database System"]
+                direction LR
+                postgres[("🐘 PostgreSQL")]
+                pg_exp["📡 Metrics"]
+                postgres --- pg_exp
+            end
+            
+            subgraph Stream["Event Streaming"]
+                direction LR
+                kafka["🔹 Kafka"]
+                connect["🔄 Connect"]
+                kafka_exp["📡 Metrics"]
+                kafka --- connect
+                kafka --- kafka_exp
+            end
+            
+            subgraph Monitor["System Monitoring"]
+                direction LR
+                prometheus["🔥 Prometheus"]
+                grafana["📊 Grafana"]
+                prometheus --> grafana
             end
         end
     end
 
-    subgraph StreamingLayer[🔄 Streaming Layer]
-        subgraph Debezium[Debezium]
-            DC[Connector]
-            DS[Serializer]
-        end
-        subgraph Kafka[Apache Kafka]
-            KB[Kafka Broker]
-            KT1[news.public.articles]
-            KT2[news.public.media]
-        end
-    end
+    %% Deployment Flow
+    actions ==>|Deploy| CrawlerVM
+    actions ==>|Deploy| InfraVM
 
-    subgraph TargetDB[💾 Target Database Layer]
-        subgraph MySQL[MySQL Database]
-            MS[(MySQL)]
-            MT1[articles]
-            MT2[media]
-            MT3[categories]
-        end
-    end
+    %% Data Flow
+    crawler ==>|Store| postgres
+    crawler ==>|Cache| redis
+    fastapi ==>|Query| postgres
+    kafka ==>|CDC| postgres
+    
+    %% Monitoring Flow
+    prometheus -.->|Collect| pg_exp
+    prometheus -.->|Collect| kafka_exp
+    prometheus -.->|Collect| redis_exp
 
-    C --> CD1 & CD2 & CD3
-    CD1 & CD2 & CD3 --> PG
-    T1 & T2 & T3 --> CT
-    T1 & T2 & T3 --> WAL
-    WAL --> DC
-    DC --> DS
-    DS --> KB
-    KB --> KT1 & KT2
-    KT1 --> MT1
-    KT2 --> MT2
+    %% Styling
+    classDef githubStyle fill:#2b3137,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef postgresStyle fill:#336791,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef kafkaStyle fill:#231f20,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef prometheusStyle fill:#e6522c,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef grafanaStyle fill:#F46800,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef redisStyle fill:#dc382d,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef fastapiStyle fill:#009688,color:#fff,stroke:#333,stroke-width:2px,rx:8
+    classDef vmStyle fill:#f8f9fa,color:#333,stroke:#4a4a4a,stroke-width:3px,rx:10
+    classDef layerStyle fill:#ffffff,color:#333,stroke:#666,stroke-width:2px,stroke-dasharray: 5 5,rx:8
+    classDef cicdStyle fill:#2b3137,color:#fff,stroke:#333,stroke-width:2px,rx:10
+    classDef gcpStyle fill:#4285f4,color:#fff,stroke:#333,stroke-width:2px,rx:10
+    classDef metricsStyle fill:#6c757d,color:#fff,stroke:#333,stroke-width:1px,rx:8
 
+    %% Apply styles
+    class GitHub,code,actions githubStyle
+    class postgres,pg_exp postgresStyle
+    class kafka,connect,kafka_exp kafkaStyle
+    class prometheus prometheusStyle
+    class grafana grafanaStyle
+    class redis,redis_exp redisStyle
+    class fastapi fastapiStyle
+    class CrawlerVM,InfraVM vmStyle
+    class GCP gcpStyle
+    class API,Crawler,CacheLayer,DB,Stream,Monitor layerStyle
+    class CI_CD cicdStyle
+    class redis_exp,pg_exp,kafka_exp metricsStyle
 
 ```
 ## 🔍 System Components
