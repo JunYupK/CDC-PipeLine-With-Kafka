@@ -32,7 +32,7 @@ WORKDIR /app
 
 # 필요한 Python 패키지 설치
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 # Playwright 브라우저 설치
 RUN playwright install chromium
