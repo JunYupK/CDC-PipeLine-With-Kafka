@@ -61,6 +61,8 @@ services:
       KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: "HTTPS"
       KAFKA_SUPER_USERS: 'User:admin'
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'false'
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_METADATA_LOG_DIR: '/tmp/kraft-combined-logs'
     networks:
       infra-network:
         aliases:
