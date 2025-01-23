@@ -11,6 +11,8 @@ class Config:
     DB_PASSWORD = os.getenv('DB_PASSWORD')
     DB_HOST = os.getenv('DB_HOST')
     DB_PORT = os.getenv('DB_PORT')
+    FASTAPI_PORT = int(os.getenv('FASTAPI_PORT'))
+    METRICS_PORT = int(os.getenv('METRICS_PORT'))
 
     @classmethod
     def validate(cls):

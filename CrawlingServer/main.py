@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 
     # Prometheus 메트릭 서버 시작 (크롤러 서비스의 레지스트리 사용)
     metrics_app = make_wsgi_app(registry=crawler_service.get_registry())
-    httpd = make_server('', 8000, metrics_app)
+    httpd = make_server('', Config.METRICS_PORT, metrics_app)
     metrics_server = threading.Thread(target=httpd.serve_forever)
     metrics_server.daemon = True
     metrics_server.start()
@@ -178,7 +178,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8080,
+        port=Config.FASTAPI_PORT,
         reload=True,
         loop='asyncio'  # asyncio 이벤트 루프 사용
     )
