@@ -173,6 +173,9 @@ async def get_article_stats():
             detail=f"Failed to get article stats: {str(e)}"
         )
 
+    @app.get("/health")
+    async def health_check():
+        return {"status": "healthy"}
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
