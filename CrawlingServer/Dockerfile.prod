@@ -1,40 +1,25 @@
 FROM python:3.11-slim
 
-# 시스템 패키지 설치
+# 최소한의 시스템 패키지만 설치
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
-    curl \
-    libglib2.0-0 \
-    libnss3 \
-    libgbm1 \
-    libnspr4 \
-    libxss1 \
-    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-# 크롬 브라우저 설치
-RUN apt-get update && apt-get install -y chromium && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
+# 앱 종속성 설치
 COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-# Playwright 설치
-RUN playwright install chromium
-RUN playwright install-deps
-
-# 권한 설정
-RUN useradd -m -u 1000 crawler
-RUN chown -R crawler:crawler /app
-USER crawler
+RUN pip install -r requirements.txt && \
+    python -m playwright install --with-deps chromium
 
 COPY . .
 
-EXPOSE ${FASTAPI_PORT}
-EXPOSE ${METRICS_PORT}
+# 포트 설정
+EXPOSE 8080
+EXPOSE 8000
 
+# 실행 명령
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "4"]
 
+# 헬스체크 설정
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
    CMD curl -f http://localhost:8080/health || exit 1
