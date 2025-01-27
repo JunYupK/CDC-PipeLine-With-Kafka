@@ -145,4 +145,4 @@ volumes:
 networks:
   infra-network:
     driver: bridge
-    internal: true  # 내부 네트워크만 허용
+    internal: false

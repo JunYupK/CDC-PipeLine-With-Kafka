@@ -98,4 +98,4 @@ volumes:
 networks:
   infra-network:
     driver: bridge
-    internal: false
+    external: true  # 외부 네트워크 사용 선언
