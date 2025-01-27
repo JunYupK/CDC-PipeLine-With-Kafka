@@ -1,8 +1,8 @@
 import asyncio
 import sys
 import threading
-
-
+import os
+os.environ['DISABLE_COLORAMA'] = 'TRUE'
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -173,9 +173,9 @@ async def get_article_stats():
             detail=f"Failed to get article stats: {str(e)}"
         )
 
-    @app.get("/health")
-    async def health_check():
-        return {"status": "healthy"}
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

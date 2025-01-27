@@ -80,8 +80,10 @@ async def get_article(timestamp, category):
 
         print(f"배치 {i // BATCH_SIZE + 1} 완료")
 
-    data_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent / 'data'
+    data_dir = Path('/services/data')
     news_file = data_dir / f'{category}_naver_news_with_contents_{timestamp}.json'
+
+    data_dir.mkdir(parents=True, exist_ok=True)
     with open(news_file, 'w', encoding='utf-8') as f:
         json.dump(articles, f, ensure_ascii=False, indent=2)
 
