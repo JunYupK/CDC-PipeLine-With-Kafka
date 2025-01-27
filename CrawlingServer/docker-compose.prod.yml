@@ -96,6 +96,6 @@ volumes:
   crawler_data:
 
 networks:
-  crawler-network:
+  infra-network:
     driver: bridge
     internal: false
