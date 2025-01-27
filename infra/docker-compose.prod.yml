@@ -15,11 +15,13 @@ services:
       - "max_wal_senders=10"
       - "-c"
       - "max_replication_slots=10"
-    expose:
-      - "5432"
+      - "listen_addresses=*"
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-postgres:/docker-entrypoint-initdb.d
+      - ./postgresql/pg_hba.conf:/etc/postgresql/postgresql.conf:ro  # 설정 파일 마운트
     networks:
       infra-network:
         aliases:
