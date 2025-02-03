@@ -86,8 +86,8 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    expose:
-      - "9090"
+    ports:
+      - "9090:9090"
     volumes:
       - ./prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
