@@ -119,8 +119,10 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_SECURITY_ALLOW_EMBEDDING=false
       - GF_SECURITY_DISABLE_GRAVATAR=true
-      - GF_SECURITY_COOKIE_SECURE=true
+      - GF_SECURITY_COOKIE_SECURE=false
       - GF_SECURITY_STRICT_TRANSPORT_SECURITY=true
+      - GF_SERVER_DOMAIN=34.64.251.191
+      - GF_SERVER_ROOT_URL=http://34.64.251.191:3000
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
