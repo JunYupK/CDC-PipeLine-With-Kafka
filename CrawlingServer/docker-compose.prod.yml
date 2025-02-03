@@ -97,4 +97,5 @@ volumes:
 
 networks:
   infra-network:
+    name: infra-network
     driver: bridge
