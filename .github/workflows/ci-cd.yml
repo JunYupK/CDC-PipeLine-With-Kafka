@@ -1,6 +1,7 @@
 name: CI/CD Pipeline for crwaling server
 
 on:
+ workflow_dispatch:
  push:
    branches: [ main ]
    paths:
