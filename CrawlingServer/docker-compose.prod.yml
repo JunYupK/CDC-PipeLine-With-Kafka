@@ -2,6 +2,7 @@ version: '3'
 
 services:
   crawler:
+    image: gcr.io/${GCP_PROJECT_ID}/crawler:${TAG}
     build:
       context: .
       dockerfile: Dockerfile.prod
