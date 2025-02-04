@@ -20,6 +20,7 @@ class CrawlerService:
         return cls._instance
 
     def __init__(self):
+        print("init!")
         if not hasattr(self, 'initialized'):
             # 크롤링할 URL 및 카테고리 정의
             self.URLS = [
