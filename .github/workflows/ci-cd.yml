@@ -60,10 +60,10 @@ jobs:
         password: ${{ secrets.GCP_SA_KEY }}
 
     - name: Build and push
-        uses: docker/build-push-action@v2
-        with:
-          context: ./CrawlingServer
-          push: true
+      uses: docker/build-push-action@v2
+      with:
+        context: ./CrawlingServer
+        push: true
         tags: |
           gcr.io/${{ env.GCP_PROJECT_ID }}/crawler:${{ github.sha }}
           gcr.io/${{ env.GCP_PROJECT_ID }}/crawler:latest
