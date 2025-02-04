@@ -3,8 +3,12 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'CrawlingServer/**'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'CrawlingServer/**'
 
 env:
   GCP_PROJECT_ID: cdc-pipeline-with-kafka
@@ -56,10 +60,10 @@ jobs:
         password: ${{ secrets.GCP_SA_KEY }}
 
     - name: Build and push
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        push: true
+        uses: docker/build-push-action@v2
+        with:
+          context: ./CrawlingServer
+          push: true
         tags: |
           gcr.io/${{ env.GCP_PROJECT_ID }}/crawler:${{ github.sha }}
           gcr.io/${{ env.GCP_PROJECT_ID }}/crawler:latest
