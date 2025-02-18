@@ -239,12 +239,12 @@ class CrawlerService:
     def get_metrics(self) -> Dict[str, Any]:
         """모든 Prometheus 메트릭 수집"""
         return {
-            "crawl_time": self.CRAWL_TIME._collect(),
-            "success": self.CRAWL_SUCCESS._collect(),
-            "failure": self.CRAWL_FAILURE._collect(),
-            "processed": self.ARTICLES_PROCESSED._collect(),
-            "db_operation_time": self.DB_OPERATION_TIME._collect(),
-            "status": self.CRAWL_STATUS._collect()
+            "crawl_time": self.CRAWL_TIME.collect(),
+            "success": self.CRAWL_SUCCESS.collect(),
+            "failure": self.CRAWL_FAILURE.collect(),
+            "processed": self.ARTICLES_PROCESSED.collect(),
+            "db_operation_time": self.DB_OPERATION_TIME.collect(),
+            "status": self.CRAWL_STATUS.collect()
         }
 
     @classmethod
