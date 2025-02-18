@@ -6,7 +6,7 @@ scrape_configs:
   # 크롤러 메트릭
   - job_name: 'crawler'
     static_configs:
-      - targets: ['${CRAWLER_IP}:${METRICS_PORT}']
+      - targets: ['34.64.63.202:9090']
 
   # Redis 메트릭
   - job_name: 'redis'
