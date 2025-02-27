@@ -4,6 +4,9 @@ set -e
 # 환경 변수 로드
 source .env
 
+# docker-compose 파일 지정
+COMPOSE_FILE="docker-compose.prod.yml"
+
 # 헬스체크 설정
 MAX_RETRIES=30
 RETRY_INTERVAL=10
@@ -51,7 +54,7 @@ check_metrics() {
 # PostgreSQL 연결 확인
 check_postgres() {
     for i in $(seq 1 $MAX_RETRIES); do
-        if docker-compose exec -T postgres pg_isready -U "${DB_USER}" -d "${DB_NAME}" > /dev/null 2>&1; then
+        if docker-compose -f $COMPOSE_FILE exec -T postgres pg_isready -U "${DB_USER}" -d "${DB_NAME}" > /dev/null 2>&1; then
             echo "✅ PostgreSQL connection verified"
             return 0
         fi

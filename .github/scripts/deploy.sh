@@ -7,6 +7,9 @@ source .env
 # 배포 시작 로그
 echo "🚀 Starting deployment process at $(date)"
 
+# docker-compose 파일 지정
+COMPOSE_FILE="docker-compose.prod.yml"
+
 # 컨테이너 상태 확인
 echo "🔍 Checking current container status..."
 docker ps -a
@@ -15,14 +18,14 @@ docker ps -a
 RUNNING_CONTAINERS=$(docker ps -q)
 if [ -n "$RUNNING_CONTAINERS" ]; then
     echo "🔄 Stopping previous containers..."
-    docker-compose down --remove-orphans
+    docker-compose -f $COMPOSE_FILE down --remove-orphans
 else
     echo "ℹ️ No running containers found"
 fi
 
 # 새 이미지 pull
 echo "📥 Pulling new images..."
-docker-compose pull crawler
+docker-compose -f $COMPOSE_FILE pull crawler
 
 # 이미지 정보 출력
 echo "📋 Image details:"
@@ -37,7 +40,7 @@ fi
 
 # 컨테이너 시작
 echo "🔄 Starting new containers..."
-docker-compose up -d
+docker-compose -f $COMPOSE_FILE up -d
 
 # 초기 대기 시간
 echo "⏳ Waiting for initial startup (30s)..."
@@ -45,7 +48,7 @@ sleep 30
 
 # 배포 로그 출력
 echo "📝 Deployment logs:"
-docker-compose logs --tail=50 crawler
+docker-compose -f $COMPOSE_FILE logs --tail=50 crawler
 
 # 헬스체크 실행
 echo "🔄 Running health checks..."
@@ -62,7 +65,7 @@ if [ $HEALTH_CHECK_RESULT -eq 0 ]; then
     
     # 서비스 상태 출력
     echo "📊 Current service status:"
-    docker-compose ps
+    docker-compose -f $COMPOSE_FILE ps
     
     exit 0
 else
@@ -71,7 +74,7 @@ else
     
     # 최근 로그 출력
     echo "📝 Recent logs:"
-    docker-compose logs --tail=100 crawler
+    docker-compose -f $COMPOSE_FILE logs --tail=100 crawler
     
     exit 1
 fi
