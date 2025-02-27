@@ -3,7 +3,6 @@ import json
 from typing import Tuple, List, Dict, Any, Optional
 
 from crawl4ai import JsonCssExtractionStrategy, AsyncWebCrawler, CacheMode
-from crawl4ai.models import CrawlingResponse
 
 
 async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[int, Optional[List[Dict[str, Any]]]]:
@@ -77,7 +76,7 @@ async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[i
 
     try:
         async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
-            result: CrawlingResponse = await crawler.arun(
+            result = await crawler.arun(
                 url=url,
                 js_code=preload_js,
                 wait_for="css:#newsct div.section_latest_article",
