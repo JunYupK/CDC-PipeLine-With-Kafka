@@ -72,19 +72,19 @@ docker image prune -f
 # 배포 결과 출력
 if [ $HEALTH_CHECK_RESULT -eq 0 ]; then
     echo "✅ Deployment completed successfully at $(date)!"
-    
+
     # 서비스 상태 출력
     echo "📊 Current service status:"
     docker-compose -f $COMPOSE_FILE ps
-    
+
     exit 0
 else
     echo "❌ Deployment completed with issues at $(date). Health checks failed."
     echo "⚠️ Please check service logs for more details."
-    
+
     # 최근 로그 출력
     echo "📝 Recent logs:"
     docker-compose -f $COMPOSE_FILE logs --tail=100 crawler
-    
+
     exit 1
 fi
