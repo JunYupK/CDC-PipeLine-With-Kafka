@@ -1,12 +1,24 @@
 import asyncio
 import json
+from typing import Tuple, List, Dict, Any, Optional
 
 from crawl4ai import JsonCssExtractionStrategy, AsyncWebCrawler, CacheMode
+from crawl4ai.models import CrawlingResponse
 
 
-async def naver_news_matadata_crwaler(url ,click_count=5):
+async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[int, Optional[List[Dict[str, Any]]]]:
+    """
+    네이버 뉴스 메타데이터(제목, 링크)를 크롤링하는 함수
+    
+    Args:
+        url: 크롤링할 URL
+        click_count: '더보기' 버튼을 클릭할 횟수
+        
+    Returns:
+        Tuple[int, List[Dict]]: 수집된 기사 수와 기사 메타데이터 목록
+    """
     schema = {
-        "name": "Naver IT News",
+        "name": "Naver News",
         "baseSelector": "#newsct div.section_latest_article._CONTENT_LIST._PERSIST_META ul > li",
         "fields": [
             {
@@ -65,7 +77,7 @@ async def naver_news_matadata_crwaler(url ,click_count=5):
 
     try:
         async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
-            result = await crawler.arun(
+            result: CrawlingResponse = await crawler.arun(
                 url=url,
                 js_code=preload_js,
                 wait_for="css:#newsct div.section_latest_article",
@@ -74,28 +86,40 @@ async def naver_news_matadata_crwaler(url ,click_count=5):
                 delay_before_return_html=8.0
             )
 
-            companies = json.loads(result.extracted_content)
-            return len(companies), companies
+            articles = json.loads(result.extracted_content)
+            return len(articles), articles
 
     except Exception as e:
         print(f"크롤링 중 오류 발생: {str(e)}")
         return 0, None
 
-async def meta_crwaling(url):
+
+async def meta_crawling(url: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    네이버 뉴스 메타데이터 크롤링 및 저장을 처리하는 함수
+    
+    Args:
+        url: 크롤링할 URL
+        
+    Returns:
+        Optional[List[Dict]]: 수집된 기사 메타데이터 목록
+    """
+    # 설정값
     max_retries = 5
     min_articles = 30
     current_retry = 0
     click_count = 3
+    temp_file = 'naver_it_news.json'
 
     while current_retry < max_retries:
         print(f"\n시도 {current_retry + 1}/{max_retries}")
-        article_count, articles = await naver_news_matadata_crwaler(url, click_count)
+        article_count, articles = await naver_news_metadata_crawler(url, click_count)
 
         if articles and article_count >= min_articles:
             print(f"\n성공: {article_count}개의 기사를 수집했습니다.")
 
             # 결과 저장 (상위 data 폴더가 아닌 임시 파일로 저장)
-            with open('naver_it_news.json', 'w', encoding='utf-8') as f:
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(articles, f, ensure_ascii=False, indent=2)
 
             return articles
@@ -106,3 +130,5 @@ async def meta_crwaling(url):
             print(f"{current_retry + 1}번째 재시도 시작...")
             click_count += 2
             await asyncio.sleep(3)
+    
+    return None
