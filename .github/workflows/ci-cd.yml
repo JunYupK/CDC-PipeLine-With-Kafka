@@ -15,6 +15,8 @@ on:
 
 env:
   GCP_PROJECT_ID: cdc-pipeline-with-kafka
+  REGION: asia-northeast3    # 서울 리전
+  REPOSITORY: cdc-pipeline-crawling-server  # 스크린샷에 표시된 저장소 이름
   DOCKER_BUILDKIT: 1
   COMPOSE_DOCKER_CLI_BUILD: 1
   TAG: ${{ github.sha }}
@@ -33,7 +35,7 @@ jobs:
     defaults:
       run:
         working-directory: ./CrawlingServer
-    
+
     services:
       # 테스트용 PostgreSQL 컨테이너
       postgres:
@@ -49,150 +51,165 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-cov pytest-asyncio
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
 
-    - name: Set up test database
-      run: |
-        PGPASSWORD=${{ env.DB_PASSWORD }} psql -h localhost -U ${{ env.DB_USER }} -d ${{ env.DB_NAME }} -c "
-        CREATE TABLE IF NOT EXISTS articles (
-          id SERIAL PRIMARY KEY,
-          title TEXT NOT NULL,
-          content TEXT,
-          link TEXT,
-          stored_date TEXT,
-          category TEXT,
-          img TEXT
-        );"
+      - name: Set up test database
+        run: |
+          PGPASSWORD=${{ env.DB_PASSWORD }} psql -h localhost -U ${{ env.DB_USER }} -d ${{ env.DB_NAME }} -c "
+          CREATE TABLE IF NOT EXISTS articles (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT,
+            link TEXT,
+            stored_date TEXT,
+            category TEXT,
+            img TEXT
+          );"
 
-    - name: Run tests
-      run: |
-        pytest --cov=./ --cov-report=xml
+      - name: Run tests
+        run: |
+          pytest --cov=./ --cov-report=xml
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        directory: ./CrawlingServer
-        fail_ci_if_error: false
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: ./CrawlingServer
+          fail_ci_if_error: false
 
   lint:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ./CrawlingServer
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
 
-    - name: Install linting tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 mypy
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 mypy
 
-    - name: Run flake8
-      run: |
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # 경고는 허용하지만 오류는 검사
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      - name: Run flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # 경고는 허용하지만 오류는 검사
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-    - name: Run mypy
-      run: |
-        mypy --ignore-missing-imports .
+      - name: Run mypy
+        run: |
+          mypy --ignore-missing-imports .
 
   build-and-push:
     needs: [test, lint]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-    - name: Login to GCR
-      uses: docker/login-action@v2
-      with:
-        registry: gcr.io
-        username: _json_key
-        password: ${{ secrets.GCP_SA_KEY }}
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-    - name: Build and push
-      uses: docker/build-push-action@v4
-      with:
-        context: ./CrawlingServer
-        push: true
-        tags: |
-          gcr.io/${{ env.GCP_PROJECT_ID }}/crawler:${{ github.sha }}
-          gcr.io/${{ env.GCP_PROJECT_ID }}/crawler:latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGION }}-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: ./CrawlingServer
+          push: true
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/crawler:${{ github.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/crawler:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
   deploy:
     needs: build-and-push
     runs-on: self-hosted
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Update deployment files
-      working-directory: ./CrawlingServer
-      run: |
-        # 환경 변수 파일 생성/업데이트
-        echo "TAG=${GITHUB_SHA}" > .env
-        echo "FASTAPI_PORT=${FASTAPI_PORT}" >> .env
-        echo "METRICS_PORT=${METRICS_PORT}" >> .env
-        
-        # DB 환경변수는 Github Secrets에서 가져오기
-        echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env
-        echo "DB_USER=${{ secrets.DB_USER }}" >> .env
-        echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-        echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env
-        echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
+      - name: Update deployment files
+        working-directory: ./CrawlingServer
+        run: |
+          # 환경 변수 파일 생성/업데이트
+          echo "TAG=${GITHUB_SHA}" > .env
+          echo "FASTAPI_PORT=${FASTAPI_PORT}" >> .env
+          echo "METRICS_PORT=${METRICS_PORT}" >> .env
+          echo "GCP_PROJECT_ID=${GCP_PROJECT_ID}" >> .env
+          echo "REGION=${REGION}" >> .env
+          echo "REPOSITORY=${REPOSITORY}" >> .env
+          
+          # DB 환경변수는 Github Secrets에서 가져오기
+          echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+          echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env
+          echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
+          
+          # 이미지 경로를 Artifact Registry로 업데이트
+          sed -i "s|gcr.io/\${GCP_PROJECT_ID}/crawler:\${TAG}|\${REGION}-docker.pkg.dev/\${GCP_PROJECT_ID}/\${REPOSITORY}/crawler:\${TAG}|g" docker-compose.yml
 
-    - name: Deploy application
-      working-directory: ./CrawlingServer
-      run: |
-        chmod +x ../.github/scripts/deploy.sh
-        chmod +x ../.github/scripts/health_check.sh
-        ../.github/scripts/deploy.sh
+      - name: Deploy application
+        working-directory: ./CrawlingServer
+        run: |
+          chmod +x ../.github/scripts/deploy.sh
+          chmod +x ../.github/scripts/health_check.sh
+          ../.github/scripts/deploy.sh
 
-    - name: Verify deployment
-      run: |
-        # 배포 검증
-        HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${FASTAPI_PORT}/health)
-        if [ "$HEALTH_STATUS" != "200" ]; then
-          echo "Deployment verification failed: Service is not healthy"
-          exit 1
-        fi
-        echo "Deployment verified: Service is healthy"
-        
-    - name: Notify on success
-      if: success()
-      run: |
-        echo "Deployment completed successfully at $(date)"
+      - name: Verify deployment
+        run: |
+          # 배포 검증
+          HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${FASTAPI_PORT}/health)
+          if [ "$HEALTH_STATUS" != "200" ]; then
+            echo "Deployment verification failed: Service is not healthy"
+            exit 1
+          fi
+          echo "Deployment verified: Service is healthy"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "Deployment completed successfully at $(date)"
