@@ -4,26 +4,33 @@ from pathlib import Path
 import asyncio
 import json
 import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple, cast, ClassVar
 
 from services.db import save_to_db_with_retry
 from services.crawlers import crawl_news, crawl_content
 
 
 class CrawlerService:
-    _instance = None
-    _registry = CollectorRegistry()
+    """
+    뉴스 크롤링 서비스를 관리하는 클래스
+    
+    크롤링 작업 실행, 상태 관리, 메트릭 수집 기능을 제공합니다.
+    """
+    _instance: ClassVar[Optional['CrawlerService']] = None
+    _registry: ClassVar[CollectorRegistry] = CollectorRegistry()
 
-    def __new__(cls):
+    def __new__(cls) -> 'CrawlerService':
+        """싱글톤 패턴 구현"""
         if cls._instance is None:
             cls._instance = super(CrawlerService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """인스턴스 초기화"""
         print("init!")
         if not hasattr(self, 'initialized'):
             # 크롤링할 URL 및 카테고리 정의
-            self.URLS = [
+            self.URLS: List[List[str]] = [
                 ["정치", "https://news.naver.com/section/100"],
                 ["경제", "https://news.naver.com/section/101"],
                 ["사회", "https://news.naver.com/section/102"],
@@ -37,7 +44,7 @@ class CrawlerService:
             self.current_category: Optional[str] = None
             self.crawl_start_time: Optional[datetime] = None
             self.error_count: Dict[str, int] = {category: 0 for category, _ in self.URLS}
-            self.current_task: Optional[asyncio.Task] = None
+            self.current_task: Optional[asyncio.Task[Any]] = None  # 명시적 Any 타입 파라미터
             # Prometheus 메트릭 초기화
             self._init_metrics()
 
@@ -105,7 +112,7 @@ class CrawlerService:
     async def crawling_job(self, target_category: Optional[str] = None) -> None:
         """
         주어진 카테고리 또는 모든 카테고리의 뉴스를 크롤링
-
+        
         Args:
             target_category: 크롤링할 특정 카테고리. None인 경우 모든 카테고리 크롤링
 
@@ -188,7 +195,12 @@ class CrawlerService:
             self.current_task = None
 
     def get_crawling_status(self) -> Dict[str, Any]:
-        """현재 크롤링 상태 조회"""
+        """
+        현재 크롤링 상태 조회
+        
+        Returns:
+            Dict[str, Any]: 현재 크롤링 상태 정보
+        """
         return {
             "is_crawling": self.is_crawling,
             "current_category": self.current_category,
@@ -197,21 +209,36 @@ class CrawlerService:
         }
 
     def get_last_execution(self) -> Dict[str, float]:
-        """각 카테고리별 마지막 실행 시간 조회"""
+        """
+        각 카테고리별 마지막 실행 시간 조회
+        
+        Returns:
+            Dict[str, float]: 카테고리별 마지막 실행 시간 (유닉스 타임스탬프)
+        """
         return {
             category: float(self.LAST_EXECUTION_TIME.labels(category=category)._value.get() or 0)
             for category, _ in self.URLS
         }
 
     def get_articles_processed(self) -> Dict[str, int]:
-        """각 카테고리별 처리된 기사 수 조회"""
+        """
+        각 카테고리별 처리된 기사 수 조회
+        
+        Returns:
+            Dict[str, int]: 카테고리별 처리된 기사 수
+        """
         return {
             category: int(self.ARTICLES_PROCESSED.labels(category=category)._value.get() or 0)
             for category, _ in self.URLS
         }
 
     def get_success_rate(self) -> Dict[str, float]:
-        """각 카테고리별 크롤링 성공률 계산"""
+        """
+        각 카테고리별 크롤링 성공률 계산
+        
+        Returns:
+            Dict[str, float]: 카테고리별 크롤링 성공률 (0.0 ~ 1.0)
+        """
         rates = {}
         for category, _ in self.URLS:
             try:
@@ -223,7 +250,15 @@ class CrawlerService:
         return rates
 
     def stop_crawling(self) -> Dict[str, str]:
-        """현재 실행 중인 크롤링 작업 중지"""
+        """
+        현재 실행 중인 크롤링 작업 중지
+        
+        Returns:
+            Dict[str, str]: 중지 요청 결과
+            
+        Raises:
+            RuntimeError: 실행 중인 크롤링 작업이 없는 경우
+        """
         if not self.is_crawling or not self.current_task:
             raise RuntimeError("No crawling job is currently running")
 
@@ -237,7 +272,12 @@ class CrawlerService:
             raise RuntimeError(f"Failed to stop crawling: {str(e)}")
 
     def get_metrics(self) -> Dict[str, Any]:
-        """모든 Prometheus 메트릭 수집"""
+        """
+        모든 Prometheus 메트릭 수집
+        
+        Returns:
+            Dict[str, Any]: 수집된 메트릭 데이터
+        """
         return {
             "crawl_time": self.CRAWL_TIME.collect(),
             "success": self.CRAWL_SUCCESS.collect(),
@@ -249,5 +289,10 @@ class CrawlerService:
 
     @classmethod
     def get_registry(cls) -> CollectorRegistry:
-        """Prometheus 레지스트리 반환"""
+        """
+        Prometheus 레지스트리 반환
+        
+        Returns:
+            CollectorRegistry: Prometheus 메트릭 레지스트리
+        """
         return cls._registry

@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, cast
 
 from crawl4ai import AsyncWebCrawler, CacheMode
 from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
@@ -94,7 +94,9 @@ async def get_article(timestamp: str, category: str) -> Optional[List[Dict[str, 
     for i in range(0, len(articles), BATCH_SIZE):
         batch = articles[i:i + BATCH_SIZE]
         async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
-            if asyncio.current_task().cancelled():
+            # 현재 태스크 확인 및 취소 여부 확인
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelled():
                 print("크롤링이 취소되었습니다.")
                 return None
 
