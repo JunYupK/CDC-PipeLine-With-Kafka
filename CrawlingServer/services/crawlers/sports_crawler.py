@@ -99,7 +99,7 @@ async def crawl_sports_page(category: str, page_num: int = 1) -> Optional[List[D
         return None
 
 
-async def fetch_article_content(url: str, crawler: AsyncWebCrawler) -> Optional[Dict[str, Any]]:
+async def fetch_article_content(url: str) -> Optional[Dict[str, Any]]:
     """
     네이버 스포츠 기사 내용과 이미지를 크롤링합니다.
 
