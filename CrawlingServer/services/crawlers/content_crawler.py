@@ -2,6 +2,7 @@ from datetime import datetime
 import asyncio
 import json
 import os
+import random
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, cast
 
@@ -11,8 +12,9 @@ from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
 
 # 설정 상수
 TEMP_FILE = 'naver_it_news.json'
-BATCH_SIZE = 10
-DEFAULT_DELAY = 1.0  # 초
+BATCH_SIZE = 5  # 배치 크기 줄임
+MIN_DELAY = 1.5  # 최소 딜레이 초
+MAX_DELAY = 3.5  # 최대 딜레이 초
 
 
 async def get_article_content(url: str, crawler: AsyncWebCrawler) -> Optional[Dict[str, Any]]:
@@ -32,12 +34,12 @@ async def get_article_content(url: str, crawler: AsyncWebCrawler) -> Optional[Di
         "fields": [
             {
                 "name": "content",
-                "selector": "#dic_area",
+                "selector": "#dic_area, #articeBody, #newsEndContents",
                 "type": "text"
             },
             {
                 "name": "article_images",
-                "selector": "#dic_area img",
+                "selector": "#dic_area img, #articeBody img, #newsEndContents img",
                 "type": "attribute",
                 "attribute": "src"
             }
@@ -51,15 +53,28 @@ async def get_article_content(url: str, crawler: AsyncWebCrawler) -> Optional[Di
             url=url,
             extraction_strategy=content_strategy,
             cache_mode=CacheMode.BYPASS,
+            delay_before_return_html=2.0,
+            page_timeout=60000,  # 1분 타임아웃
+            retry_count=2,  # 재시도 횟수
+            retry_delay=2000  # 재시도 사이 대기 시간(ms)
         )
 
-        content = json.loads(result.extracted_content)
-        if content and len(content) > 0:
-            return {
-                "content": content[0].get("content", ""),
-                "images": content[0].get("article_images", [])
-            }
-        return None
+        # 추출된 콘텐츠가 없는지 확인
+        if not result.extracted_content:
+            print(f"기사 내용을 추출할 수 없습니다: {url}")
+            return None
+            
+        try:
+            content = json.loads(result.extracted_content)
+            if content and len(content) > 0:
+                return {
+                    "content": content[0].get("content", ""),
+                    "images": content[0].get("article_images", [])
+                }
+            return None
+        except json.JSONDecodeError as e:
+            print(f"JSON 파싱 오류 ({url}): {str(e)}")
+            return None
 
     except Exception as e:
         print(f"기사 내용 크롤링 실패 ({url}): {str(e)}")
@@ -93,7 +108,16 @@ async def get_article(timestamp: str, category: str) -> Optional[List[Dict[str, 
     # 배치 단위로 처리
     for i in range(0, len(articles), BATCH_SIZE):
         batch = articles[i:i + BATCH_SIZE]
-        async with AsyncWebCrawler(headless=True, verbose=True) as crawler:
+        # 브라우저 설정 간소화
+        browser_args = [
+            '--no-sandbox', 
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ]
+        
+        async with AsyncWebCrawler(headless=True, 
+                                  verbose=True, 
+                                  browser_args=browser_args) as crawler:
             # 현재 태스크 확인 및 취소 여부 확인
             current_task = asyncio.current_task()
             if current_task is not None and current_task.cancelled():
@@ -108,7 +132,9 @@ async def get_article(timestamp: str, category: str) -> Optional[List[Dict[str, 
                     article['category'] = category
                     article['img'] = result['images'][0] if result.get('images') else None
                     print(f"기사 {i + j}/{len(articles)} 내용 수집 완료")
-                await asyncio.sleep(DEFAULT_DELAY)
+                # 봇 감지를 피하기 위한 임의의 딜레이 사용
+                random_delay = MIN_DELAY + random.random() * (MAX_DELAY - MIN_DELAY)
+                await asyncio.sleep(random_delay)
 
         print(f"배치 {i // BATCH_SIZE + 1} 완료")
 
