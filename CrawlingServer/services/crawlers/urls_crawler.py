@@ -4,7 +4,7 @@ import json
 from typing import List, Dict, Any, Optional
 import aiohttp
 from urllib.parse import urlparse, urljoin
-from crawl4ai_helper import _call_crawl4ai_api
+from .crawl4ai_helper import _call_crawl4ai_api
 
 async def fetch_urls_from_list_page(
     session: aiohttp.ClientSession,

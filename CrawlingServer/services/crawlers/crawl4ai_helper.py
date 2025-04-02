@@ -34,7 +34,7 @@ async def _call_crawl4ai_api(
     try:
         # 1. 작업 제출
         print(f"Submitting task for URL(s): {payload.get('urls')}")
-        async with session.post(crawl_url, json=payload, headers=headers, timeout=30) as response:
+        async with session.post(crawl_url, json=payload, headers=headers) as response:
             if response.status == 200:
                 data = await response.json()
                 task_id = data.get("task_id")
@@ -92,5 +92,10 @@ async def _call_crawl4ai_api(
         print(f"Error: Network error submitting task for {payload.get('urls')}: {e}")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred for task {task_id or 'unknown'}: {e}")
+        # 실제 예외 타입과 메시지를 출력하도록 변경
+        print(f"An unexpected error occurred (Task ID: {task_id or 'unknown'}). Type: {type(e).__name__}, Message: {e}")
+        # 디버깅을 위해 traceback도 출력 (선택 사항)
+        import traceback
+        traceback.print_exc()
+        # raise # 테스트 실패 시 traceback을 보려면 주석 해제
         return None

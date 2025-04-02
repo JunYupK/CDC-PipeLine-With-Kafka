@@ -9,11 +9,11 @@ if sys.platform.startswith('win'):
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from prometheus_client import start_http_server, make_wsgi_app
+from prometheus_client import make_wsgi_app
 from typing import Optional
 from wsgiref.simple_server import make_server
 
-from services.crawler_service import CrawlerService
+from CrawlingServer.crawler_service import CrawlerService
 from services.db.postgres import get_db_connection
 
 from config import Config

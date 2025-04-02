@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List
 import aiohttp
 
 # 위에서 만든 헬퍼 함수 임포트
-from crawl4ai_helper import _call_crawl4ai_api
+from .crawl4ai_helper import _call_crawl4ai_api
 
 async def fetch_article_content(
     session: aiohttp.ClientSession,

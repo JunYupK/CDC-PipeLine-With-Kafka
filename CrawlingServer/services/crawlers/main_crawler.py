@@ -2,7 +2,7 @@
 import asyncio
 import aiohttp
 import json
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -12,8 +12,8 @@ from contents_crawler import fetch_article_content
 
 # --- 설정 ---
 # API 엔드포인트 및 토큰 (환경 변수나 설정 파일에서 읽어오는 것이 더 좋음)
-CRAWL4AI_API_BASE_URL = "http://crawl4ai-server:11235" # Docker 내부 컨테이너 이름 사용
-# CRAWL4AI_API_BASE_URL = "http://localhost:11235" # 로컬 테스트 시
+# CRAWL4AI_API_BASE_URL = "http://crawl4ai-server:11235" # Docker 내부 컨테이너 이름 사용
+CRAWL4AI_API_BASE_URL = "http://localhost:11235" # 로컬 테스트 시
 CRAWL4AI_API_TOKEN = "home" # 실제 사용하는 토큰으로 변경
 
 # 크롤링 대상 및 카테고리
