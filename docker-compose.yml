@@ -2,7 +2,8 @@ version: '3.8'
 
 services:
   crawl4ai:
-    image: unclecode/crawl4ai:all
+    image: unclecode/crawl4ai:all-amd64
+    platform: linux/amd64
     container_name: crawl4ai-server
     ports:
       - "11235:11235"

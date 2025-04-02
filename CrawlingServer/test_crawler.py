@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from services.crawlers.news_crawler import naver_news_metadata_crawler, meta_crawling
-from services.crawlers.content_crawler import get_article_content, get_article
+from services.crawlers.contents_crawler import get_article_content, get_article
 from services.db.postgres import insert_multiple_articles, save_to_db_with_retry
 from config import Config
 

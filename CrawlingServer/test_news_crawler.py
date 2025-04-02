@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 # news_crawler와 content_crawler를 import합니다
 from services.crawlers.news_crawler import meta_crawling
-from services.crawlers.content_crawler import get_article
+from services.crawlers.contents_crawler import get_article
 
 
 async def test_single_category(category, url):
