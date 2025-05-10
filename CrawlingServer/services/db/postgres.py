@@ -29,7 +29,7 @@ def get_connection_pool() -> ThreadedConnectionPool:
         # 최소 및 최대 연결 설정
         minconn = 1
         maxconn = 10
-        
+
         _pool = ThreadedConnectionPool(
             minconn,
             maxconn,
@@ -40,7 +40,7 @@ def get_connection_pool() -> ThreadedConnectionPool:
             port=Config.DB_PORT
         )
         logger.info(f"DB 연결 풀 생성 완료 (minconn={minconn}, maxconn={maxconn})")
-    
+
     return _pool
 
 
@@ -74,32 +74,33 @@ def insert_multiple_articles(articles: List[Dict[str, Any]]) -> int:
         Exception: 데이터베이스 작업 중 오류 발생 시
     """
     start_time = time.time()
-    
+
     with get_db_connection() as conn:
         try:
             cur = conn.cursor()
 
+            # 기존 쿼리에서 img 컬럼 제거
             insert_query = """
             INSERT INTO articles 
-            (title, content, link, stored_date, category, img)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (title, content, link, stored_date, category)
+            VALUES (%s, %s, %s, %s, %s)
             """
 
+            # 데이터에서도 img 필드 제거
             article_data = [(
                 article["title"],
                 article["content"],
                 article["link"],
                 article["stored_date"],
-                article.get("category", "정치"),
-                article.get("img")
+                article.get("category", "정치")
             ) for article in articles]
 
             cur.executemany(insert_query, article_data)
             conn.commit()
-            
+
             elapsed_time = time.time() - start_time
             logger.info(f"{len(articles)}개 기사 삽입 완료 (소요시간: {elapsed_time:.2f}초)")
-            
+
             return len(articles)
 
         except Exception as e:
