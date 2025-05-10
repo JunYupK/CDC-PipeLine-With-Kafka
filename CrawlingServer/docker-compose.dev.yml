@@ -5,56 +5,54 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    platform: linux/amd64  # M1/M2 Mac 호환성
     ports:
       - "8080:8080"  # FastAPI
       - "8000:8000"  # Prometheus metrics
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST=redis.internal
       - REDIS_PORT=6379
-      - POSTGRES_HOST=postgres
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - POSTGRES_HOST=postgres.internal
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-    volumes:
-      - .:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
-    depends_on:
-      - redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka.internal:29092
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres.internal
+      - DB_PORT=${DB_PORT}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: uvicorn main:app --host 0.0.0.0 --port 8080
     networks:
-      - crawler-network
-      - crawler-infra
+      - infra-network
+    restart: unless-stopped
 
-  # Redis (크롤러 전용 캐시)
-  redis:
-    image: redis:latest
+  # Crawl4AI 서비스 추가
+  crawl4ai:
+    image: unclecode/crawl4ai:all-amd64
+    platform: linux/amd64
+    container_name: crawl4ai-server
     ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    networks:
-      - crawler-network
-
-  # Redis Exporter (Redis 메트릭 수집용)
-  redis-exporter:
-    image: oliver006/redis_exporter:latest
+      - "11235:11235"
     environment:
-      - REDIS_ADDR=redis://redis:6379
-    ports:
-      - "9121:9121"
-    depends_on:
-      - redis
+      - CRAWL4AI_API_TOKEN=home
+      - MAX_CONCURRENT_TASKS=10
+    volumes:
+      - /dev/shm:/dev/shm
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
     networks:
-      - crawler-network
-      - crawler-infra
-
-volumes:
-  redis_data:
+      - infra-network
+    restart: unless-stopped
 
 networks:
-  crawler-network:
-    driver: bridge
-  crawler-infra:
+  infra-network:
     external: true
-    name: crawler-infra-network
+    name: infra-network
