@@ -11,77 +11,52 @@ async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[i
     
     Args:
         url: 크롤링할 URL
-        click_count: '더보기' 버튼을 클릭할 횟수
-        
+        click_count: '더보기' 버튼을 클릭할 횟수 (더 이상 사용하지 않음)
+
     Returns:
         Tuple[int, List[Dict]]: 수집된 기사 수와 기사 메타데이터 목록
     """
-    # 동적 콘텐츠 로드를 위한 자바스크립트 코드
-    js_code = f"""
-        let totalLoadedItems = 0;
-        
-        for (let i = 0; i < {click_count}; i++) {{
-            // 페이지 끝까지 스크롤
-            window.scrollTo(0, document.body.scrollHeight);
-            
-            // 더보기 버튼 찾기 시도
-            const moreButton = 
-                document.querySelector('#newsct > div.section_latest > div > div.section_more > a') || 
-                document.querySelector('.section_more > a') ||
-                document.querySelector('.more_btn_inner');
-                
-            if (moreButton) {{
-                moreButton.click();
-                // 클릭 후 대기
-                await new Promise(resolve => setTimeout(resolve, 1500));
-            }}
-        }}
-    """
-    
     # CSS 추출 스키마 정의
     schema = {
         "name": "Naver News",
-        "baseSelector": "#section_body > ul > li, #newsct div.section_latest_article._CONTENT_LIST._PERSIST_META ul > li",
+        "baseSelector": "li",
         "fields": [
             {
                 "name": "title",
-                "selector": "dt > a, div.sa_text > a > strong",
+                "selector": "div.sa_text > a > strong, a.sa_text_title > strong.sa_text_strong",
                 "type": "text"
             },
             {
                 "name": "link",
-                "selector": "dt > a, div.sa_text > a",
+                "selector": "div.sa_text > a, a.sa_text_title",
                 "type": "attribute",
                 "attribute": "href"
             }
         ]
     }
-    
+
     # Crawl4AI Docker API 요청 생성
     request_data = {
         "urls": url,
-        "js_code": js_code,
-        "wait_for": "css:#section_body, css:#newsct div.section_latest_article",
         "extraction_config": {
             "type": "json_css",
-            "params": {
-                "schema": schema
-            }
+            "params": {"schema": schema}
         },
         "crawler_params": {
             "headless": True,
-            "page_timeout": 120000,  # 2분 타임아웃
+            "page_timeout": 60000,  # 1분 타임아웃
+            "wait_until": "domcontentloaded"
         },
         "extra": {
-            "delay_before_return_html": 3.0,
+            "delay_before_return_html": 2.0,
         },
         "priority": 10
     }
-    
+
     # API 토큰 설정
-    api_token = "home"
+    api_token = "home"  # 환경에 맞게 수정
     headers = {"Authorization": f"Bearer {api_token}"}
-    
+
     try:
         # API 호출 - Docker 환경에서는 'crawl4ai-server'라는 컨테이너명으로 접근해야 함
         crawl4ai_url = "http://crawl4ai-server:11235/crawl" # Docker 컨테이너 네트워크 내부에서 접근
@@ -93,35 +68,41 @@ async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[i
             print("Docker 컨테이너 연결 실패, localhost로 시도합니다.")
             crawl4ai_url = "http://localhost:11235/crawl"
             response = requests.post(crawl4ai_url, json=request_data, headers=headers)
-        response.raise_for_status()  # 오류 확인
-        
+
+        # 응답 디버깅 정보
+        print(f"API 응답 상태 코드: {response.status_code}")
+
+        # 오류 확인
+        if response.status_code != 200:
+            print(f"API 오류: {response.text}")
+            return 0, None
+
         task_id = response.json().get("task_id")
         if not task_id:
-            print("작업 ID를 받지 못했습니다.")
+            print(f"작업 ID를 받지 못했습니다.")
             return 0, None
-            
+
         # 결과 대기 (최대 3분)
         max_wait_time = 180  # 초
         start_time = asyncio.get_event_loop().time()
-        
+
         while (asyncio.get_event_loop().time() - start_time) < max_wait_time:
-            # 작업 상태 확인 - 동일한 인증 헤더 사용
-            # 작업 상태 확인 URL도 동일하게 컨테이너명 사용
+            # 작업 상태 확인 URL
             status_url = f"http://crawl4ai-server:11235/task/{task_id}"
             try:
-                status_response = requests.get(status_url, headers=headers, timeout=10)  # 인증 헤더 추가
+                status_response = requests.get(status_url, headers=headers, timeout=10)
             except requests.exceptions.ConnectionError:
                 # Docker 컨테이너 연결 실패 시 localhost로 시도
                 status_url = f"http://localhost:11235/task/{task_id}"
-                status_response = requests.get(status_url, headers=headers)  # 인증 헤더 추가
+                status_response = requests.get(status_url, headers=headers)
             status_data = status_response.json()
-            
+
             # 작업이 완료되었는지 확인
             if status_data.get("status") == "completed":
                 # 결과 처리
                 result = status_data.get("result", {})
                 extracted_content = result.get("extracted_content")
-                
+
                 if extracted_content:
                     try:
                         # 추출된 콘텐츠가 문자열이면 JSON 파싱
@@ -129,56 +110,38 @@ async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[i
                             articles = json.loads(extracted_content)
                         else:
                             articles = extracted_content
-                            
+
+                        # 유효한 기사만 필터링
+                        valid_articles = [
+                            a for a in articles
+                            if a.get("title") and a.get("link")
+                        ]
+
                         # URL 처리: 상대 경로인 경우 완전한 URL로 변환
-                        for article in articles:
+                        for article in valid_articles:
                             if article['link'] and not article['link'].startswith('http'):
                                 article['link'] = f"https://news.naver.com{article['link']}"
-                        
-                        return len(articles), articles
+
+                        print(f"{len(valid_articles)}개의 유효한 기사 메타데이터 수집 완료")
+                        return len(valid_articles), valid_articles
                     except json.JSONDecodeError as e:
                         print(f"JSON 파싱 오류: {str(e)}")
-                        # HTML이 반환된 경우 직접 추출 시도
-                        html = result.get("html", "")
-                        if html and len(html) > 10000:
-                            try:
-                                import re
-                                title_pattern = r'<dt>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)<'
-                                matches = re.findall(title_pattern, html)
-                                
-                                if matches:
-                                    articles = []
-                                    for link, title in matches:
-                                        if '/article/' in link:
-                                            if not link.startswith('http'):
-                                                link = 'https://news.naver.com' + link
-                                            articles.append({
-                                                'title': title.strip(),
-                                                'link': link
-                                            })
-                                    
-                                    if articles:
-                                        print(f"{len(articles)}개의 기사를 직접 추출했습니다.")
-                                        return len(articles), articles
-                            except Exception as e:
-                                print(f"직접 추출 오류: {str(e)}")
-                        
                         return 0, None
                 else:
                     print("추출된 콘텐츠가 없습니다.")
                     return 0, None
-            
+
             elif status_data.get("status") == "failed":
                 print(f"크롤링 작업 실패: {status_data.get('error', '알 수 없는 오류')}")
                 return 0, None
-                
+
             # 아직 완료되지 않았으면 대기
             await asyncio.sleep(3)
-        
+
         # 시간 초과
         print("시간 초과: 작업이 완료되지 않았습니다.")
         return 0, None
-        
+
     except requests.RequestException as e:
         print(f"API 요청 오류: {str(e)}")
         return 0, None

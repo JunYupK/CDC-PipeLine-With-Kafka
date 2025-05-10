@@ -1,0 +1,38 @@
+{
+  "정치": {
+    "category": "정치",
+    "success": false,
+    "error": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"extraction_config\",\"type\"],\"msg\":\"Input should be 'basic', 'llm', 'cosine' or 'json_css'\",\"input\":\"JsonCssExtractionStrategy\",\"ctx\":{\"expected\":\"'basic', 'llm', 'cosine' or 'json_css'\"}}]}",
+    "duration": 0.013046741485595703
+  },
+  "경제": {
+    "category": "경제",
+    "success": false,
+    "error": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"extraction_config\",\"type\"],\"msg\":\"Input should be 'basic', 'llm', 'cosine' or 'json_css'\",\"input\":\"JsonCssExtractionStrategy\",\"ctx\":{\"expected\":\"'basic', 'llm', 'cosine' or 'json_css'\"}}]}",
+    "duration": 0.05244779586791992
+  },
+  "사회": {
+    "category": "사회",
+    "success": false,
+    "error": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"extraction_config\",\"type\"],\"msg\":\"Input should be 'basic', 'llm', 'cosine' or 'json_css'\",\"input\":\"JsonCssExtractionStrategy\",\"ctx\":{\"expected\":\"'basic', 'llm', 'cosine' or 'json_css'\"}}]}",
+    "duration": 0.054789066314697266
+  },
+  "생활문화": {
+    "category": "생활문화",
+    "success": false,
+    "error": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"extraction_config\",\"type\"],\"msg\":\"Input should be 'basic', 'llm', 'cosine' or 'json_css'\",\"input\":\"JsonCssExtractionStrategy\",\"ctx\":{\"expected\":\"'basic', 'llm', 'cosine' or 'json_css'\"}}]}",
+    "duration": 0.054131507873535156
+  },
+  "세계": {
+    "category": "세계",
+    "success": false,
+    "error": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"extraction_config\",\"type\"],\"msg\":\"Input should be 'basic', 'llm', 'cosine' or 'json_css'\",\"input\":\"JsonCssExtractionStrategy\",\"ctx\":{\"expected\":\"'basic', 'llm', 'cosine' or 'json_css'\"}}]}",
+    "duration": 0.055625200271606445
+  },
+  "IT과학": {
+    "category": "IT과학",
+    "success": false,
+    "error": "{\"detail\":[{\"type\":\"enum\",\"loc\":[\"body\",\"extraction_config\",\"type\"],\"msg\":\"Input should be 'basic', 'llm', 'cosine' or 'json_css'\",\"input\":\"JsonCssExtractionStrategy\",\"ctx\":{\"expected\":\"'basic', 'llm', 'cosine' or 'json_css'\"}}]}",
+    "duration": 0.0530698299407959
+  }
+}
