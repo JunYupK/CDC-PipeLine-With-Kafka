@@ -3,16 +3,20 @@ services:
   mysql:
     image: mysql:8.0
     ports:
-      - "3306:3306"
+      - "3307:3306"  # 호스트 3307, 컨테이너 3306 (MySQL 기본)
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_DATABASE: ${MYSQL_DATABASE} # 이 변수만 사용
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
-      - mysql_data:/var/lib/mysql # 이 부분은 그대로 둡니다.
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      # healthcheck는 컨테이너 내부의 3306 포트를 기준으로 해야 합니다.
+      # 하지만 healthcheck의 -h localhost는 컨테이너 자신을 가리키므로,
+      # 컨테이너 내부 포트(3306)로 접근하는 것이 맞습니다.
+      # docker-compose.yml의 ports 설정과는 별개입니다.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-P", "3306", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,8 +28,5 @@ services:
       options:
         max-size: "100m"
         max-file: "3"
-
-# --- 이 부분을 추가해주세요 ---
 volumes:
-  mysql_data: {} # 이렇게 하면 Docker가 관리하는 명명된 볼륨(named volume)이 생성됩니다.
-# ------------------------------
+  mysql_data: {}

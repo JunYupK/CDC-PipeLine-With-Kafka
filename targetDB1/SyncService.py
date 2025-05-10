@@ -24,8 +24,8 @@ load_dotenv()
 # 설정 상수
 KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka.internal:9092')
 KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'mysql-sync-group')
-MYSQL_HOST = os.getenv('MYSQL_HOST', 'mysql.internal')
-MYSQL_PORT = int(os.getenv('MYSQL_PORT', '3306'))
+MYSQL_HOST = os.getenv('MYSQL_HOST', 'localhost')
+MYSQL_PORT = int(os.getenv('MYSQL_PORT', '3307'))
 MYSQL_USER = os.getenv('MYSQL_USER', 'kjy')
 MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', 'home')
 MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', 'target_db')
@@ -36,8 +36,6 @@ MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 
 # Kafka 토픽 설정
 KAFKA_TOPICS = [
-    'postgres.public.articles',
-    'postgres.public.media',
     'postgres.public.article_changes'
 ]
 
@@ -125,7 +123,22 @@ class DebeziumEventHandler:
                 type = VALUES(type),
                 url = VALUES(url),
                 caption = VALUES(caption)
-            """
+            """,
+            'article_changes': """
+                INSERT INTO article_changes 
+                (id, article_id, operation, changed_at, old_data, new_data, kafka_event_op, kafka_event_ts_ms)
+                VALUES 
+                (%(id)s, %(article_id)s, %(operation)s, %(changed_at)s, 
+                 %(old_data_json)s, %(new_data_json)s, %(kafka_op)s, %(kafka_ts_ms)s)
+                ON DUPLICATE KEY UPDATE
+                article_id = VALUES(article_id),
+                operation = VALUES(operation),
+                changed_at = VALUES(changed_at),
+                old_data = VALUES(old_data),
+                new_data = VALUES(new_data),
+                kafka_event_op = VALUES(kafka_event_op),
+                kafka_event_ts_ms = VALUES(kafka_event_ts_ms)
+            """ # <--- 이 쿼리가 추가되었는지 확인! (컬럼명과 플레이스홀더는 실제 테이블/데이터에 맞게)
         }
 
         # 테이블별 삭제 쿼리
@@ -196,6 +209,8 @@ class DebeziumEventHandler:
             return 'articles'
         elif table == 'media':
             return 'media'
+        elif table == 'article_changes':  # <--- article_changes 처리 추가
+            return 'article_changes'
         else:
             logger.warning(f"지원되지 않는 테이블: {table}")
             return table
