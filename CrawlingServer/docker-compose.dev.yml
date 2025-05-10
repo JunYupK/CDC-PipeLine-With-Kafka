@@ -4,8 +4,7 @@ services:
   crawler:
     build:
       context: .
-      dockerfile: Dockerfile
-    platform: linux/amd64  # M1/M2 Mac 호환성
+      dockerfile: Dockerfile.prod
     ports:
       - "8080:8080"  # FastAPI
       - "8000:8000"  # Prometheus metrics
@@ -28,6 +27,8 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8080
     networks:
       - infra-network
+    volumes:
+      - ./:/app
     restart: unless-stopped
 
   # Crawl4AI 서비스 추가

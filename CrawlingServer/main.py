@@ -13,7 +13,7 @@ from prometheus_client import make_wsgi_app
 from typing import Optional
 from wsgiref.simple_server import make_server
 
-from CrawlingServer.crawler_service import CrawlerService
+from crawler_service import CrawlerService
 from services.db.postgres import get_db_connection
 
 from config import Config

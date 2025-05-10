@@ -79,7 +79,7 @@ async def naver_news_metadata_crawler(url: str, click_count: int = 5) -> Tuple[i
     }
     
     # API 토큰 설정
-    api_token = "mysecrettoken"
+    api_token = "home"
     headers = {"Authorization": f"Bearer {api_token}"}
     
     try:
