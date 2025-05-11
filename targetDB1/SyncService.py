@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 # 로그 설정
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # INFO에서 DEBUG로 변경
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("sync-service")
@@ -23,7 +23,7 @@ load_dotenv()
 
 # 설정 상수
 KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka.internal:9092')
-KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'mysql-sync-group')
+KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'mysql-sync-group-new2')
 MYSQL_HOST = os.getenv('MYSQL_HOST', 'localhost')
 MYSQL_PORT = int(os.getenv('MYSQL_PORT', '3307'))
 MYSQL_USER = os.getenv('MYSQL_USER', 'kjy')
@@ -126,19 +126,17 @@ class DebeziumEventHandler:
             """,
             'article_changes': """
                 INSERT INTO article_changes 
-                (id, article_id, operation, changed_at, old_data, new_data, kafka_event_op, kafka_event_ts_ms)
+                (id, article_id, operation, changed_at, old_data, new_data)
                 VALUES 
                 (%(id)s, %(article_id)s, %(operation)s, %(changed_at)s, 
-                 %(old_data_json)s, %(new_data_json)s, %(kafka_op)s, %(kafka_ts_ms)s)
+                 %(old_data)s, %(new_data)s)
                 ON DUPLICATE KEY UPDATE
                 article_id = VALUES(article_id),
                 operation = VALUES(operation),
                 changed_at = VALUES(changed_at),
                 old_data = VALUES(old_data),
-                new_data = VALUES(new_data),
-                kafka_event_op = VALUES(kafka_event_op),
-                kafka_event_ts_ms = VALUES(kafka_event_ts_ms)
-            """ # <--- 이 쿼리가 추가되었는지 확인! (컬럼명과 플레이스홀더는 실제 테이블/데이터에 맞게)
+                new_data = VALUES(new_data)
+            """
         }
 
         # 테이블별 삭제 쿼리
@@ -150,12 +148,6 @@ class DebeziumEventHandler:
     def process_event(self, event: Dict[str, Any]) -> bool:
         """
         Debezium 이벤트를 처리하는 메소드
-
-        Args:
-            event: Debezium 이벤트 딕셔너리
-
-        Returns:
-            bool: 성공 여부
         """
         if not event:
             return False
@@ -164,8 +156,16 @@ class DebeziumEventHandler:
         try:
             table_name = self._extract_table_name(event)
 
-            # payload 확인 및 추출
-            payload = event.get('payload', {})
+            # 테이블명이 비어있으면 처리 중단
+            if not table_name:
+                logger.warning(f"추출된 테이블명이 비어있습니다: {event}")
+                return False
+
+            # payload 체크 (이벤트 자체가 페이로드인 경우와 payload 키가 있는 경우 모두 처리)
+            payload = event
+            if 'payload' in event:
+                payload = event.get('payload', {})
+
             if not payload:
                 logger.warning(f"이벤트 페이로드가 비어 있습니다: {event}")
                 return False
@@ -176,44 +176,48 @@ class DebeziumEventHandler:
                 logger.warning(f"작업 유형이 없는 이벤트: {payload}")
                 return False
 
+            # 디버깅을 위한 로깅 추가
+            logger.debug(f"처리 중인 이벤트: 테이블={table_name}, 작업={operation}")
+
             # 작업 유형에 따라 처리
-            if operation == 'c' or operation == 'r':  # 생성(create) 또는 읽기(read)
+            if operation in ('c', 'r', 'u'):  # 생성, 읽기, 업데이트
                 data = payload.get('after', {})
                 return self._handle_insert_or_update(table_name, data)
-
-            elif operation == 'u':  # 업데이트(update)
-                data = payload.get('after', {})
-                return self._handle_insert_or_update(table_name, data)
-
-            elif operation == 'd':  # 삭제(delete)
+            elif operation == 'd':  # 삭제
                 data = payload.get('before', {})
                 record_id = data.get('id')
                 return self._handle_delete(table_name, record_id)
-
             else:
                 logger.warning(f"지원되지 않는 작업 유형: {operation}")
                 return False
 
         except Exception as e:
-            logger.error(f"이벤트 처리 중 오류 발생: {str(e)}")
+            logger.error(f"이벤트 처리 중 오류 발생: {str(e)}", exc_info=True)  # 전체 스택 추적 추가
             return False
 
     def _extract_table_name(self, event: Dict[str, Any]) -> str:
         """이벤트에서 테이블명 추출"""
-        # Debezium 이벤트 형식에 따라 추출 로직 구현
-        source = event.get('payload', {}).get('source', {})
+        # 이벤트 자체가 페이로드인 경우 (직접 source에 접근)
+        source = event.get('source', {})
+
+        # 만약 source가 없으면 이벤트가 payload 아래에 있는 원래 구조인지 확인
+        if not source and 'payload' in event:
+            source = event.get('payload', {}).get('source', {})
+
         table = source.get('table', '')
 
-        # PostgreSQL의 테이블명 매핑
+        logger.debug(f"이벤트에서 추출한 테이블: '{table}', 소스: {source}")
+
+        # 테이블명이 있는지 확인하고 지원하는 테이블인지 검사
         if table == 'articles':
             return 'articles'
         elif table == 'media':
             return 'media'
-        elif table == 'article_changes':  # <--- article_changes 처리 추가
+        elif table == 'article_changes':
             return 'article_changes'
         else:
-            logger.warning(f"지원되지 않는 테이블: {table}")
-            return table
+            logger.warning(f"지원되지 않는 테이블: '{table}'")
+            return ''
 
     def _handle_insert_or_update(self, table_name: str, data: Dict[str, Any]) -> bool:
         """INSERT 또는 UPDATE 작업 처리"""
@@ -282,7 +286,43 @@ class DebeziumEventHandler:
         """MySQL용 데이터 준비 (JSON 필드 등 처리)"""
         processed = data.copy()
 
-        # JSON 필드가 있는 경우 처리
+        # datetime 문자열 변환 (ISO 8601 -> MySQL 형식)
+        if 'changed_at' in processed and processed['changed_at']:
+            try:
+                # Python의 datetime.fromisoformat는 'Z'를 처리하지 못하므로 문자열 치환
+                changed_at_str = processed['changed_at']
+                if changed_at_str.endswith('Z'):
+                    changed_at_str = changed_at_str[:-1] + '+00:00'
+
+                # Python 3.7 이상: fromisoformat 사용
+                from datetime import datetime
+                dt = datetime.fromisoformat(changed_at_str)
+
+                # MySQL이 인식할 수 있는 형식으로 변환
+                processed['changed_at'] = dt.strftime('%Y-%m-%d %H:%M:%S.%f')
+            except Exception as e:
+                logger.warning(f"날짜 변환 실패: {processed['changed_at']} - {str(e)}")
+
+        # article_changes 테이블 처리
+        if 'operation' in processed:  # article_changes 테이블의 특징적인 필드를 체크
+            # JSON 필드 처리
+            if 'old_data' in processed and processed['old_data'] is not None:
+                if not isinstance(processed['old_data'], str):
+                    processed['old_data_json'] = json.dumps(processed['old_data'])
+                else:
+                    processed['old_data_json'] = processed['old_data']
+            else:
+                processed['old_data_json'] = None
+
+            if 'new_data' in processed and processed['new_data'] is not None:
+                if not isinstance(processed['new_data'], str):
+                    processed['new_data_json'] = json.dumps(processed['new_data'])
+                else:
+                    processed['new_data_json'] = processed['new_data']
+            else:
+                processed['new_data_json'] = None
+
+        # 기존 로직 유지
         if 'extracted_entities' in processed and processed['extracted_entities']:
             if isinstance(processed['extracted_entities'], dict):
                 processed['extracted_entities'] = json.dumps(processed['extracted_entities'])
@@ -293,6 +333,7 @@ class DebeziumEventHandler:
                 processed[key] = None
 
         return processed
+
 
 
 class KafkaConsumerWorker:

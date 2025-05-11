@@ -31,7 +31,7 @@ class Config:
     METRICS_PORT: int = int(os.getenv('METRICS_PORT', '8001'))
     
     # 크롤링 설정
-    CRAWL_INTERVAL: int = int(os.getenv('CRAWL_INTERVAL', '10800'))  # 기본값: 3시간(10800초)
+    CRAWL_INTERVAL: int = int(os.getenv('CRAWL_INTERVAL', '1800'))  # 기본값: 3시간(10800초)
     TEMP_FILE: str = os.getenv('TEMP_FILE', 'naver_it_news.json')
     MIN_ARTICLES: int = int(os.getenv('MIN_ARTICLES', '30'))
     

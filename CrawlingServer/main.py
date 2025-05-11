@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     metrics_server.daemon = True
     metrics_server.start()
 
-    scheduler.add_job(crawler_service.crawling_job, 'interval', hours=3)
+    scheduler.add_job(crawler_service.crawling_job, 'interval', minutes=30)
     scheduler.start()
 
     yield
