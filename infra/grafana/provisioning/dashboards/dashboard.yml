@@ -1,7 +1,7 @@
 apiVersion: 1
 
 providers:
-  - name: 'Default'
+  - name: '기본 대시보드'
     orgId: 1
     folder: ''
     type: file

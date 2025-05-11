@@ -1,28 +1,20 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  scrape_timeout: 10s
 
 scrape_configs:
   # 크롤러 메트릭
   - job_name: 'crawler'
     static_configs:
-      - targets: ['localhost:8000']
+      - targets: ['crawler.internal:8000']
 
-  # Redis 메트릭
+  # Redis 메트릭 (기존 것 유지)
   - job_name: 'redis'
     static_configs:
       - targets: ['redis-exporter:9121']
 
-  - job_name: 'kafka'
-    static_configs:
-      - targets: ['kafka-exporter:9308']
-    scrape_interval: 5s
-
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['postgres-exporter:9187']
-    scrape_interval: 5s
-
+  # Prometheus 자체 모니터링
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
