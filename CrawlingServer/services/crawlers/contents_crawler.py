@@ -1,16 +1,15 @@
 # contents_crawler.py
 import asyncio
 import json
-import os
+import aiohttp
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
-import aiohttp
 
 # 위에서 만든 헬퍼 함수 임포트
 from .crawl4ai_helper import _call_crawl4ai_api
 
-# 원본 세부 구현 함수 유지
+# 단일 기사의 내용을 크롤링하는 함수
 async def fetch_article_content(
         session: aiohttp.ClientSession,
         api_url_base: str,
@@ -45,7 +44,7 @@ async def fetch_article_content(
     request_data = {
         "urls": article_url,
         "extraction_config": {
-            "type": "json_css",
+            "type": "json_css",  # 문자열 형식 사용 (API 호출용)
             "params": {"schema": schema}
         },
         "crawler_params": default_crawler_params,
@@ -97,8 +96,9 @@ async def fetch_article_content(
         print(f"Error: Failed to get result for {article_url}")
         return None
 
-# 서비스에서 호출되는 인터페이스 함수 추가
-async def crawl_content(timestamp: str, category: str) -> Optional[List[Dict[str, Any]]]:
+
+# CrawlerService에서 호출하는 인터페이스 함수 추가
+async def get_article(timestamp: str, category: str) -> Optional[List[Dict[str, Any]]]:
     """
     메타데이터 JSON 파일을 읽어 기사 내용을 크롤링하고 결과를 저장합니다.
 
@@ -109,15 +109,18 @@ async def crawl_content(timestamp: str, category: str) -> Optional[List[Dict[str
     Returns:
         Optional[List[Dict[str, Any]]]: 크롤링된 기사 목록, 실패 시 None
     """
-    TEMP_FILE = 'naver_it_news.json'  # 메타데이터 임시 저장 파일
-    MAX_CONCURRENT_CONTENT_FETCHES = 5  # 동시 크롤링 수
-    API_URL_BASE = "http://crawl4ai-server:11235"  # Docker 내부 URL
-    API_TOKEN = "home"  # API 토큰
+    # 설정 상수
+    TEMP_FILE = 'naver_it_news.json'
+    BATCH_SIZE = 5  # 배치 크기
+    MIN_DELAY = 1.5  # 최소 딜레이 초
+    MAX_DELAY = 3.5  # 최대 딜레이 초
+    API_BASE_URL = "http://crawl4ai-server:11235"
+    API_TOKEN = "home"
 
-    # 본문 추출 스키마
+    # Crawl4AI 추출 스키마 정의
     CONTENT_SCHEMA = {
         "name": "Naver Article Content",
-        "baseSelector": "body",  # 전체 body에서 찾기
+        "baseSelector": "body", # 전체 body에서 찾는 것이 일반적
         "fields": [
             {
                 "name": "content",
@@ -131,88 +134,85 @@ async def crawl_content(timestamp: str, category: str) -> Optional[List[Dict[str
                 "selector": "#dic_area img, #articeBody img, #newsEndContents img, .article_body img",
                 "type": "attribute",
                 "attribute": "src",
-                "multiple": True  # 여러 이미지를 가져오도록 설정
+                "multiple": True
             }
         ]
     }
 
     try:
-        # 메타데이터 파일 읽기
-        with open(TEMP_FILE, 'r', encoding='utf-8') as f:
-            articles = json.load(f)
-    except FileNotFoundError:
-        error_msg = f"{TEMP_FILE} 파일을 찾을 수 없습니다."
-        print(error_msg)
-        return None
+        # 메타데이터 파일 로드
+        try:
+            with open(TEMP_FILE, 'r', encoding='utf-8') as f:
+                articles = json.load(f)
+        except FileNotFoundError:
+            error_msg = f"{TEMP_FILE} 파일을 찾을 수 없습니다."
+            print(error_msg)
+            raise FileNotFoundError(error_msg)
 
-    print(f"\n총 {len(articles)}개의 기사 내용 수집 시작...")
-    final_articles = []
+        print(f"\n총 {len(articles)}개의 기사 내용 수집 시작...")
 
-    # aiohttp 세션 생성 (모든 요청에서 공유)
-    async with aiohttp.ClientSession() as session:
-        # 배치 처리를 위한 작업 생성
-        tasks = []
-        for article in articles:
-            article_url = article.get("link")
-            if not article_url:
-                print(f"Warning: Article has no link: {article}")
-                continue
+        # aiohttp 세션 생성 (세션 재사용으로 연결 효율성 향상)
+        async with aiohttp.ClientSession() as session:
+            # 배치 단위로 처리
+            for i in range(0, len(articles), BATCH_SIZE):
+                batch = articles[i:i + BATCH_SIZE]
 
-            task = asyncio.create_task(fetch_article_content(
-                session=session,
-                api_url_base=API_URL_BASE,
-                api_token=API_TOKEN,
-                article_url=article_url,
-                schema=CONTENT_SCHEMA
-            ))
-            tasks.append((article, task))
+                # 현재 태스크 확인 및 취소 여부 확인
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelled():
+                    print("크롤링이 취소되었습니다.")
+                    return None
 
-            # 작업이 MAX_CONCURRENT_CONTENT_FETCHES에 도달하면 처리
-            if len(tasks) >= MAX_CONCURRENT_CONTENT_FETCHES:
-                await process_tasks(tasks, final_articles, category)
-                tasks = []  # 작업 목록 초기화
+                for j, article in enumerate(batch, 1):
+                    article_url = article.get('link')
+                    if not article_url:
+                        print(f"Warning: 링크 정보가 없는 기사 건너뜀 ({i+j}/{len(articles)})")
+                        continue
 
-        # 남은 작업 처리
-        if tasks:
-            await process_tasks(tasks, final_articles, category)
+                    # 개별 기사 내용 크롤링
+                    try:
+                        result = await fetch_article_content(
+                            session,
+                            API_BASE_URL,
+                            API_TOKEN,
+                            article_url,
+                            CONTENT_SCHEMA
+                        )
 
-    # 결과 저장
-    if final_articles:
+                        if result:
+                            article['content'] = result['content'].strip()
+                            article['stored_date'] = datetime.now().strftime("%Y%m%d")
+                            article['category'] = category
+                            article['img'] = result['images'][0] if result.get('images') else None
+                            print(f"기사 {i + j}/{len(articles)} 내용 수집 완료")
+                        else:
+                            print(f"기사 {i + j}/{len(articles)} 내용 수집 실패")
+                            article['content'] = ""
+                            article['stored_date'] = datetime.now().strftime("%Y%m%d")
+                            article['category'] = category
+                            article['img'] = None
+                    except Exception as e:
+                        print(f"기사 {i + j}/{len(articles)} 내용 수집 중 오류 발생: {str(e)}")
+                        article['content'] = ""
+                        article['stored_date'] = datetime.now().strftime("%Y%m%d")
+                        article['category'] = category
+                        article['img'] = None
+
+                    # 봇 감지를 피하기 위한 임의의 딜레이 사용
+                    await asyncio.sleep(MIN_DELAY + (MAX_DELAY - MIN_DELAY) * 0.5)
+
+                print(f"배치 {i // BATCH_SIZE + 1}/{(len(articles) + BATCH_SIZE - 1) // BATCH_SIZE} 완료")
+
+        # 결과 저장
         data_dir = Path('data')
+        news_file = data_dir / f'{category}_naver_news_with_contents_{timestamp}.json'
+
         data_dir.mkdir(parents=True, exist_ok=True)
-        result_file = data_dir / f'{category}_naver_news_with_contents_{timestamp}.json'
+        with open(news_file, 'w', encoding='utf-8') as f:
+            json.dump(articles, f, ensure_ascii=False, indent=2)
 
-        with open(result_file, 'w', encoding='utf-8') as f:
-            json.dump(final_articles, f, ensure_ascii=False, indent=2)
-
-        print(f"\n총 {len(final_articles)}개 기사 내용 수집 및 저장 완료: {result_file}")
-    else:
-        print("\n수집된 기사가 없습니다.")
-
-    return final_articles
-
-async def process_tasks(tasks, final_articles, category):
-    """작업 배치를 처리하고 결과를 final_articles에 추가"""
-    results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
-
-    for (article, _), result in zip(tasks, results):
-        if isinstance(result, Exception):
-            print(f"Error fetching content for {article.get('link')}: {result}")
-            continue
-
-        if result:
-            # 기존 메타데이터와 콘텐츠 정보 병합
-            processed_article = {
-                **article,  # 기존 title, link 등
-                "content": result.get("content", ""),
-                "images": result.get("images", []),
-                "stored_date": datetime.now().strftime("%Y%m%d"),
-                "category": category
-            }
-            final_articles.append(processed_article)
-            print(f"Processed content for: {article.get('title', 'Unknown title')[:30]}...")
-        else:
-            print(f"Failed to fetch content for: {article.get('title', 'Unknown title')[:30]}...")
-
-    # 작업 간 약간의 대기 시간
-    await asyncio.sleep(1)
+        print(f"\n모든 기사 내용 수집 완료: {len(articles)}개")
+        return articles
+    except Exception as e:
+        print(f"기사 내용 수집 중 예외 발생: {str(e)}")
+        return None

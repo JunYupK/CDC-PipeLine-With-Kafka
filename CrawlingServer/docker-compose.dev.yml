@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile.prod
     ports:
       - "8080:8080"  # FastAPI
-      - "8000:8000"  # Prometheus metrics
+      - "${METRICS_PORT}:${METRICS_PORT}"
     environment:
       - REDIS_HOST=redis.internal
       - REDIS_PORT=6379
@@ -26,12 +26,15 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: uvicorn main:app --host 0.0.0.0 --port 8080
     networks:
-      - infra-network
+      infra-network:
+        aliases:
+          - crawler.internal
     volumes:
       - ./:/app
     restart: unless-stopped
 
   # Crawl4AI 서비스 추가
+  # Crawl4AI 서비스 수정: 메모리 및 안정성 개선
   crawl4ai:
     image: unclecode/crawl4ai:all-amd64
     platform: linux/amd64
@@ -41,17 +44,25 @@ services:
     environment:
       - CRAWL4AI_API_TOKEN=home
       - MAX_CONCURRENT_TASKS=10
+      - LOG_LEVEL=INFO  # 로깅 레벨 추가
+      - HEADLESS=true
     volumes:
       - /dev/shm:/dev/shm
     deploy:
       resources:
         limits:
           memory: 4G
+          cpus: '2'
         reservations:
           memory: 1G
+          cpus: '1'
+    healthcheck:  # 헬스체크 추가
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - infra-network
-    restart: unless-stopped
 
 networks:
   infra-network:

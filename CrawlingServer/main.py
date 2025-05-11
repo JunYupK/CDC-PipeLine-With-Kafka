@@ -34,7 +34,12 @@ async def lifespan(app: FastAPI):
     metrics_server.daemon = True
     metrics_server.start()
 
-    scheduler.add_job(crawler_service.crawling_job, 'interval', minutes=30)
+    # 크롤링 스케줄 설정
+    scheduler.add_job(crawler_service.crawling_job, 'interval', hours=3)
+
+    # 10초마다 시스템 메트릭 업데이트
+    scheduler.add_job(crawler_service.update_system_metrics, 'interval', seconds=10)
+
     scheduler.start()
 
     yield
@@ -44,10 +49,11 @@ async def lifespan(app: FastAPI):
     httpd.shutdown()
 
 
+# FastAPI 앱 객체 생성 - 라우트 정의 전에 위치해야 함
 app = FastAPI(title="News Crawler API", lifespan=lifespan)
 
 
-
+# 이제 라우트 정의
 @app.post("/api/v1/crawl")
 async def trigger_crawl(background_tasks: BackgroundTasks, category: Optional[str] = None):
     """수동으로 크롤링 작업 트리거"""
@@ -64,6 +70,8 @@ async def get_status():
         "articles_processed": crawler_service.get_articles_processed(),
         "success_rate": crawler_service.get_success_rate()
     }
+
+
 @app.post("/api/v1/crawl/stop")
 async def stop_crawl():
     """실행 중인 크롤링 작업 중지"""
@@ -75,6 +83,7 @@ async def stop_crawl():
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @app.get("/api/v1/metrics")
 async def get_metrics():
     """Prometheus 메트릭 조회"""
@@ -85,12 +94,11 @@ async def get_metrics():
 async def check_database():
     """DB 연결 상태 확인"""
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute('SELECT 1')
-            result = cur.fetchone()
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT 1')
+                result = cur.fetchone()
 
-        conn.close()
         return {
             "status": "healthy",
             "message": "Database connection successful"
@@ -106,43 +114,41 @@ async def check_database():
 async def get_article_stats():
     """DB에 저장된 기사 통계 조회"""
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            # 전체 통계
-            cur.execute("""
-                SELECT 
-                    COUNT(*) as total_articles,
-                    COUNT(DISTINCT category) as category_count,
-                    COUNT(DISTINCT stored_date) as date_count
-                FROM articles
-            """)
-            total_stats = cur.fetchone()
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # 전체 통계
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) as total_articles,
+                        COUNT(DISTINCT category) as category_count,
+                        COUNT(DISTINCT stored_date) as date_count
+                    FROM articles
+                """)
+                total_stats = cur.fetchone()
 
-            # 카테고리별 통계
-            cur.execute("""
-                SELECT 
-                    category,
-                    COUNT(*) as article_count,
-                    MIN(stored_date) as earliest_date,
-                    MAX(stored_date) as latest_date
-                FROM articles
-                GROUP BY category
-            """)
-            category_stats = cur.fetchall()
+                # 카테고리별 통계
+                cur.execute("""
+                    SELECT 
+                        category,
+                        COUNT(*) as article_count,
+                        MIN(stored_date) as earliest_date,
+                        MAX(stored_date) as latest_date
+                    FROM articles
+                    GROUP BY category
+                """)
+                category_stats = cur.fetchall()
 
-            # 최근 날짜별 통계
-            cur.execute("""
-                SELECT 
-                    stored_date,
-                    COUNT(*) as article_count
-                FROM articles
-                GROUP BY stored_date
-                ORDER BY stored_date DESC
-                LIMIT 7
-            """)
-            daily_stats = cur.fetchall()
-
-        conn.close()
+                # 최근 날짜별 통계
+                cur.execute("""
+                    SELECT 
+                        stored_date,
+                        COUNT(*) as article_count
+                    FROM articles
+                    GROUP BY stored_date
+                    ORDER BY stored_date DESC
+                    LIMIT 7
+                """)
+                daily_stats = cur.fetchall()
 
         return {
             "overall": {
@@ -173,9 +179,13 @@ async def get_article_stats():
             detail=f"Failed to get article stats: {str(e)}"
         )
 
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+# 메인 실행 코드는 파일 끝에 위치
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
