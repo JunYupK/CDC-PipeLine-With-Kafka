@@ -1,0 +1,31 @@
+# application-prod.yml (운영 환경)
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: jdbc:postgresql://postgres.internal:5432/source_db
+    username: ${DB_USER:kjy}
+    password: ${DB_PASSWORD:home}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:redis.internal}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:homesweethome}
+
+crawler:
+  crawl4ai-url: ${CRAWL4AI_URL:http://crawl4ai-server:11235}
+  api-token: ${CRAWL4AI_TOKEN:home}
+  interval-hours: ${CRAWL_INTERVAL_HOURS:3}
+
+logging:
+  level:
+    org.be.crawlerservice: INFO
+    root: WARN
