@@ -9,6 +9,7 @@
     "database.password": "home",
     "database.dbname": "source_db",
     "database.server.name": "postgres",
+    "topic.prefix": "postgres",
     "schema.include.list": "public",
     "table.include.list": "public.articles,public.media,public.article_changes",
     "plugin.name": "pgoutput",

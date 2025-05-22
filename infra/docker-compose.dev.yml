@@ -33,6 +33,26 @@ services:
       timeout: 5s
       retries: 5
 
+  debezium-init:
+    image: curlimages/curl:latest
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./connector-config.json:/connector-config.json
+    command: >
+      sh -c "
+        echo 'Waiting for Kafka Connect to start...' &&
+        until curl -s http://kafka-connect:8083/ > /dev/null; do sleep 3; echo 'Waiting...'; done &&
+        echo 'Creating Debezium connector...' &&
+        curl -X POST -H 'Content-Type: application/json' --data @/connector-config.json http://kafka-connect:8083/connectors || echo 'Connector setup completed'
+      "
+    restart: on-failure
+    networks:
+      - infra-network
+
   kafka:
     image: confluentinc/cp-kafka:latest
     platform: linux/amd64  # M1/M2 Mac 호환성
@@ -40,6 +60,7 @@ services:
     ports:
       - "9092:9092"
       - "29092:29092"
+      - "9999:9999"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
@@ -54,11 +75,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL}
-      KAFKA_SUPER_USER: ${KAFKA_SUPER_USER}
-      KAFKA_SUPER_USER_PASSWORD: ${KAFKA_SUPER_USER_PASSWORD}
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_METADATA_LOG_DIR: '/tmp/kraft-combined-logs'
+    container_name: kafka  # 명시적으로 컨테이너 이름 지정
     networks:
       infra-network:
         aliases:
@@ -68,10 +87,12 @@ services:
       interval: 20s
       timeout: 10s
       retries: 3
+    volumes:
+      - ./jmx-exporter:/opt/jmx-exporter
 
   kafka-connect:
     image: debezium/connect:2.4
-    platform: linux/amd64  # M1/M2 Mac 호환성
+    platform: linux/amd64
     ports:
       - "8083:8083"
     environment:
@@ -79,36 +100,24 @@ services:
       CONFIG_STORAGE_TOPIC: connect_configs
       OFFSET_STORAGE_TOPIC: connect_offsets
       STATUS_STORAGE_TOPIC: connect_statuses
-      BOOTSTRAP_SERVERS: kafka.internal:29092
+      BOOTSTRAP_SERVERS: kafka:29092  # 이제 Kafka가 실행 중이므로 연결 가능
       CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
       CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
     depends_on:
-      - kafka
-      - postgres
-    networks:
-      infra-network:
-        aliases:
-          - kafka-connect.internal
-
-  redis:
-    image: redis:latest
-    platform: linux/amd64  # M1/M2 Mac 호환성
-    ports:
-      - "6379:6379"
-    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
-    volumes:
-      - redis_data:/data
-    networks:
-      infra-network:
-        aliases:
-          - redis.internal
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      kafka:
+        condition: service_started  # 헬스 체크 대신 service_started 사용
+      postgres:
+        condition: service_healthy  # 이미 헬스 체크가 있는 서비스
+    healthcheck:  # 헬스 체크 추가
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 3
+      start_period: 30s  # 시작 시간을 더 여유 있게 설정
+    networks:
+      - infra-network
 
   prometheus:
     image: prom/prometheus:latest
@@ -128,6 +137,23 @@ services:
         aliases:
           - prometheus.internal
 
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    platform: linux/amd64
+    command:
+      - --kafka.server=172.19.0.5:29092
+      - --web.listen-address=:9308
+      - --log.level=debug  # 로그 레벨 증가
+    expose:
+      - "9308"
+    ports:
+      - "9308:9308"
+    depends_on:
+      kafka:
+        condition: service_started
+    restart: on-failure  # 재시작 정책 추가
+    networks:
+      - infra-network
   grafana:
     image: grafana/grafana:latest
     platform: linux/amd64  # M1/M2 Mac 호환성
@@ -159,5 +185,4 @@ volumes:
 
 networks:
   infra-network:
-    name: infra-network
-    driver: bridge
+    external: true

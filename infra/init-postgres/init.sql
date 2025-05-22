@@ -190,3 +190,7 @@ INSERT INTO categories (name) VALUES
 -- postgres_exporter 사용자에게 추가 테이블 권한 부여
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO postgres_exporter;
 ALTER USER postgres_exporter SET SEARCH_PATH TO public;
+
+      -- CDC 설정 자동화
+DROP PUBLICATION IF EXISTS dbz_publication;
+CREATE PUBLICATION dbz_publication FOR TABLE articles, media, article_changes;
