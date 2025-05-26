@@ -1,0 +1,120 @@
+version: '3'
+services:
+  crawl4ai:
+    image: unclecode/crawl4ai:all-amd64
+    platform: linux/amd64
+    container_name: crawl4ai-server
+    ports:
+      - "11235:11235"
+    environment:
+      - CRAWL4AI_API_TOKEN=home
+      - MAX_CONCURRENT_TASKS=10
+      - LOG_LEVEL=INFO  # 로깅 레벨 추가
+      - HEADLESS=true
+    volumes:
+      - /dev/shm:/dev/shm
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 1G
+          cpus: '1'
+    healthcheck:  # 헬스체크 추가
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - infra-network
+  redis:
+    image: redis:7-alpine
+    platform: linux/amd64
+    container_name: redis-server
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-homesweethome} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      infra-network:
+        aliases:
+          - redis.internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-homesweethome}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+  postgres:
+    image: postgres:latest
+    platform: linux/amd64  # M1/M2 Mac 호환성
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-postgres:/docker-entrypoint-initdb.d
+    networks:
+      infra-network:
+        aliases:
+          - postgres.internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-connect:
+    image: debezium/connect:2.4
+    platform: linux/amd64
+    ports:
+      - "8083:8083"
+    environment:
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      BOOTSTRAP_SERVERS: kafka:29092  # 이제 Kafka가 실행 중이므로 연결 가능
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    depends_on:
+      kafka:
+        condition: service_started  # 헬스 체크 대신 service_started 사용
+      postgres:
+        condition: service_healthy  # 이미 헬스 체크가 있는 서비스
+    healthcheck:  # 헬스 체크 추가
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s  # 시작 시간을 더 여유 있게 설정
+    networks:
+      - infra-network
+
+networks:
+  infra-network:
+    external: true
