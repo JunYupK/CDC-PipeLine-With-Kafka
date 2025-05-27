@@ -13,9 +13,8 @@ import java.util.List;
 @Entity
 @Table(name = "articles", indexes = {
         @Index(name = "idx_category", columnList = "category"),
-//        @Index(name = "idx_stored_date", columnList = "stored_date"),
         @Index(name = "idx_created_at", columnList = "created_at"),
-        @Index(name = "idx_link", columnList = "link", unique = true)
+        @Index(name = "idx_link", columnList = "link") // unique = true 제거
 })
 @Data
 @Builder

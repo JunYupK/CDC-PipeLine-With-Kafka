@@ -3,17 +3,24 @@ server:
   port: 8080
 
 spring:
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
   application:
     name: crawler-service
 
-  # ?????? ??
   datasource:
-    url: jdbc:postgresql://localhost:5432/articles
+    url: jdbc:postgresql://localhost:5432/source_db
     username: kjy
     password: home
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
 
-  # JPA ??
   jpa:
     hibernate:
       ddl-auto: update
@@ -24,14 +31,18 @@ spring:
         format_sql: true
     open-in-view: false
 
-  # Redis ??
   data:
     redis:
       host: localhost
       port: 6379
+      password: homesweethome
       timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
 
-  # Jackson ??
   jackson:
     serialization:
       write-dates-as-timestamps: false

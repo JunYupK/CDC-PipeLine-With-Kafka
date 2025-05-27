@@ -1,7 +1,14 @@
 package org.be.crawlerservice.service.crawler;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.be.crawlerservice.client.Crawl4AIClient;
+import org.be.crawlerservice.client.schema.NaverNewsSchemas;
+import org.be.crawlerservice.dto.crawl4ai.Crawl4AIRequest;
+import org.be.crawlerservice.dto.crawl4ai.Crawl4AIResult;
 import org.be.crawlerservice.dto.request.CrawlRequestDto;
 import org.be.crawlerservice.dto.response.CrawlStatusDto;
 import org.be.crawlerservice.dto.response.StatsResponseDto;
@@ -11,7 +18,10 @@ import org.be.crawlerservice.metrics.CrawlerMetrics;
 import org.be.crawlerservice.service.article.ArticleService;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -27,6 +37,8 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     private final ArticleService articleService;
     private final CrawlerMetrics crawlerMetrics;
+    private final Crawl4AIClient crawl4AIClient;
+    private final ObjectMapper objectMapper;
 
     // 크롤링 상태 관리
     private final AtomicBoolean isCrawling = new AtomicBoolean(false);
@@ -35,16 +47,6 @@ public class CrawlerServiceImpl implements CrawlerService {
     private final Map<String, Integer> errorCounts = new ConcurrentHashMap<>();
     private final Map<String, LocalDateTime> lastExecutionTimes = new ConcurrentHashMap<>();
     private CompletableFuture<Void> currentCrawlTask;
-
-    // 크롤링할 URL 및 카테고리 정의 (Python 코드와 동일)
-    private final List<CategoryUrl> CATEGORY_URLS = Arrays.asList(
-            new CategoryUrl("정치", "https://news.naver.com/section/100"),
-            new CategoryUrl("경제", "https://news.naver.com/section/101"),
-            new CategoryUrl("사회", "https://news.naver.com/section/102"),
-            new CategoryUrl("생활문화", "https://news.naver.com/section/103"),
-            new CategoryUrl("세계", "https://news.naver.com/section/104"),
-            new CategoryUrl("IT과학", "https://news.naver.com/section/105")
-    );
 
     @Override
     public CrawlStatusDto startCrawling(CrawlRequestDto request) {
@@ -115,7 +117,6 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     @Override
     public StatsResponseDto getCrawlingStats() {
-        // ArticleService에서 통계 가져오기
         return articleService.getArticleStats();
     }
 
@@ -135,11 +136,9 @@ public class CrawlerServiceImpl implements CrawlerService {
     public Map<String, Double> getSuccessRates() {
         Map<String, Double> successRates = new HashMap<>();
 
-        // 각 카테고리별 성공률 계산 (임시로 메트릭에서 가져오기)
-        CATEGORY_URLS.forEach(categoryUrl -> {
-            // TODO: 실제 성공률 계산 로직 구현
-            double successRate = calculateSuccessRate(categoryUrl.getCategory());
-            successRates.put(categoryUrl.getCategory(), successRate);
+        NaverNewsSchemas.getCategoryUrls().keySet().forEach(category -> {
+            double successRate = calculateSuccessRate(category);
+            successRates.put(category, successRate);
         });
 
         return successRates;
@@ -148,7 +147,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     /**
      * 비동기 크롤링 작업 실행
      */
-    @Async
+    @Async("crawlerExecutor")
     protected CompletableFuture<Void> crawlAsync(CrawlRequestDto request) {
         return CompletableFuture.runAsync(() -> {
             try {
@@ -164,6 +163,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     /**
      * 실제 크롤링 작업 수행 (Python의 crawling_job과 동일한 로직)
+     * 🔥 실제 Crawl4AIClient 사용으로 업데이트
      */
     private void crawlJob(String targetCategory) {
         log.info("크롤링 작업 시작: targetCategory={}", targetCategory);
@@ -171,18 +171,28 @@ public class CrawlerServiceImpl implements CrawlerService {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
 
         // 대상 URL 필터링
-        List<CategoryUrl> urlsToProcess = CATEGORY_URLS.stream()
-                .filter(categoryUrl -> targetCategory == null || targetCategory.equals(categoryUrl.getCategory()))
-                .toList();
+        Map<String, String> categoryUrls = NaverNewsSchemas.getCategoryUrls();
+        Map<String, String> urlsToProcess = new HashMap<>();
 
-        for (CategoryUrl categoryUrl : urlsToProcess) {
+        if (targetCategory == null) {
+            // 모든 카테고리 크롤링
+            urlsToProcess.putAll(categoryUrls);
+        } else if (categoryUrls.containsKey(targetCategory)) {
+            // 특정 카테고리만 크롤링
+            urlsToProcess.put(targetCategory, categoryUrls.get(targetCategory));
+        } else {
+            log.warn("Unknown category: {}", targetCategory);
+            return;
+        }
+
+        for (Map.Entry<String, String> entry : urlsToProcess.entrySet()) {
             if (Thread.currentThread().isInterrupted()) {
                 log.info("크롤링 작업이 중단되었습니다");
                 break;
             }
 
-            String category = categoryUrl.getCategory();
-            String url = categoryUrl.getUrl();
+            String category = entry.getKey();
+            String url = entry.getValue();
 
             try {
                 log.info("카테고리 크롤링 시작: {} - {}", category, timestamp);
@@ -193,11 +203,11 @@ public class CrawlerServiceImpl implements CrawlerService {
 
                 long startTime = System.currentTimeMillis();
 
-                // 1. 메타데이터 크롤링 (Python의 crawl_news와 동일)
+                // 1. 메타데이터 크롤링 (실제 구현)
                 List<Article> articles = crawlNewsMetadata(url, category, timestamp);
 
                 if (articles != null && !articles.isEmpty()) {
-                    // 2. 내용 크롤링 (Python의 crawl_content와 동일)
+                    // 2. 내용 크롤링 (실제 구현)
                     List<Article> articlesWithContent = crawlArticleContents(articles, category, timestamp);
 
                     if (articlesWithContent != null && !articlesWithContent.isEmpty()) {
@@ -240,34 +250,68 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     /**
-     * 뉴스 메타데이터 크롤링 (Python의 crawl_news와 동일)
+     * 뉴스 메타데이터 크롤링 (실제 Crawl4AIClient 사용)
+     * 🔥 실제 구현으로 업데이트
      */
     private List<Article> crawlNewsMetadata(String url, String category, String timestamp) {
         log.debug("메타데이터 크롤링 시작: {}", url);
 
         try {
-            // TODO: Crawl4AIClient를 사용하여 메타데이터 크롤링
-            // TODO: ParsingStrategy를 사용하여 결과 파싱
+            // Crawl4AI 요청 생성
+            Map<String, Object> schema = NaverNewsSchemas.getSchemaForCategory(category, true);
+            Crawl4AIRequest request = Crawl4AIRequest.forUrlList(url, schema);
 
-            // 임시 구현 - 실제로는 Crawl4AIClient와 ParsingStrategy 사용
+            // 실제 크롤링 실행
+            Crawl4AIResult result = crawl4AIClient.crawl(request);
+
+            if (!result.isCrawlSuccessful()) {
+                log.error("메타데이터 크롤링 실패: {} - {}", url, result.getError());
+                return null;
+            }
+
+            if (!result.hasExtractedContent()) {
+                log.warn("추출된 콘텐츠가 없음: {}", url);
+                return null;
+            }
+
+            // JSON 파싱
+            List<Map<String, Object>> extractedItems = objectMapper.readValue(
+                    result.getResult().getExtractedContent(),
+                    new TypeReference<List<Map<String, Object>>>() {}
+            );
+
+            // Article 엔티티로 변환
             List<Article> articles = new ArrayList<>();
+            for (Map<String, Object> item : extractedItems) {
+                String title = (String) item.get("title");
+                String link = (String) item.get("link");
 
-            // 테스트용 더미 데이터
-            for (int i = 1; i <= 5; i++) {
+                // 유효성 검사
+                if (!StringUtils.hasText(title) || !StringUtils.hasText(link)) {
+                    continue;
+                }
+
+                // 상대 URL을 절대 URL로 변환
+                String absoluteLink = convertToAbsoluteUrl(link, url);
+
                 Article article = Article.builder()
-                        .title(category + " 테스트 기사 " + i + " - " + timestamp)
-                        .content("테스트 내용 " + i)
-                        .link("https://test.com/" + category + "/" + i)
+                        .title(title.trim())
+                        .link(absoluteLink)
                         .category(category)
                         .storedDate(timestamp.substring(0, 8)) // YYYYMMDD 형식
-                        .source("테스트 언론사")
+                        .source("네이버뉴스")
+                        .content("") // 나중에 채움
                         .build();
+
                 articles.add(article);
             }
 
             log.info("메타데이터 크롤링 완료: {}개 기사", articles.size());
             return articles;
 
+        } catch (JsonProcessingException e) {
+            log.error("JSON 파싱 실패: {}", url, e);
+            return null;
         } catch (Exception e) {
             log.error("메타데이터 크롤링 실패: {}", url, e);
             return null;
@@ -275,39 +319,86 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     /**
-     * 기사 내용 크롤링 (Python의 crawl_content와 동일)
+     * 기사 내용 크롤링 (실제 Crawl4AIClient 사용)
+     * 🔥 실제 구현으로 업데이트
      */
     private List<Article> crawlArticleContents(List<Article> articles, String category, String timestamp) {
         log.debug("기사 내용 크롤링 시작: {}개 기사", articles.size());
 
-        try {
-            // TODO: ProcessingPipeline을 사용하여 내용 크롤링
+        Map<String, Object> contentSchema = NaverNewsSchemas.getSchemaForCategory(category, false);
+        List<Article> successfulArticles = new ArrayList<>();
 
-            // 임시 구현 - 실제로는 각 기사의 내용을 개별적으로 크롤링
-            for (Article article : articles) {
-                if (Thread.currentThread().isInterrupted()) {
-                    break;
-                }
-
-                // 내용 업데이트 (임시)
-                article.setContent(article.getContent() + " - 상세 내용이 추가되었습니다.");
-                article.setArticleTextLength(article.getContent().length());
-
-                // 딜레이 (봇 감지 방지)
-                try {
-                    Thread.sleep(1000); // 1초 대기
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+        for (Article article : articles) {
+            if (Thread.currentThread().isInterrupted()) {
+                break;
             }
 
-            log.info("기사 내용 크롤링 완료: {}개 기사", articles.size());
-            return articles;
+            try {
+                // Crawl4AI 요청 생성
+                Crawl4AIRequest request = Crawl4AIRequest.forArticleContent(article.getLink(), contentSchema);
 
-        } catch (Exception e) {
-            log.error("기사 내용 크롤링 실패", e);
-            return null;
+                // 실제 크롤링 실행
+                Crawl4AIResult result = crawl4AIClient.crawl(request);
+
+                if (result.isCrawlSuccessful() && result.hasExtractedContent()) {
+                    // JSON 파싱
+                    List<Map<String, Object>> extractedContent = objectMapper.readValue(
+                            result.getResult().getExtractedContent(),
+                            new TypeReference<List<Map<String, Object>>>() {}
+                    );
+
+                    if (!extractedContent.isEmpty()) {
+                        Map<String, Object> contentData = extractedContent.get(0);
+                        String content = (String) contentData.get("content");
+
+                        if (StringUtils.hasText(content)) {
+                            // 기사 내용 업데이트
+                            article.setContent(content.trim());
+                            article.setArticleTextLength(content.length());
+                            successfulArticles.add(article);
+
+                            log.debug("기사 내용 크롤링 성공: {}", article.getTitle());
+                        }
+                    }
+                } else {
+                    log.warn("기사 내용 크롤링 실패: {} - {}", article.getLink(), result.getError());
+                }
+
+                // 딜레이 (봇 감지 방지)
+                Thread.sleep(1500); // 1.5초 대기
+
+            } catch (JsonProcessingException e) {
+                log.error("JSON 파싱 실패: {}", article.getLink(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                log.error("기사 내용 크롤링 실패: {}", article.getLink(), e);
+            }
+        }
+
+        log.info("기사 내용 크롤링 완료: {}/{}개 성공", successfulArticles.size(), articles.size());
+        return successfulArticles;
+    }
+
+    /**
+     * 상대 URL을 절대 URL로 변환
+     */
+    private String convertToAbsoluteUrl(String link, String baseUrl) {
+        if (link.startsWith("http")) {
+            return link;
+        }
+
+        try {
+            URL base = new URL(baseUrl);
+            if (link.startsWith("/")) {
+                return base.getProtocol() + "://" + base.getHost() + link;
+            } else {
+                return baseUrl + "/" + link;
+            }
+        } catch (MalformedURLException e) {
+            log.warn("URL 변환 실패: {} + {}", baseUrl, link);
+            return link;
         }
     }
 
@@ -373,27 +464,10 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     /**
-     * 성공률 계산 (임시 구현)
+     * 성공률 계산
      */
     private double calculateSuccessRate(String category) {
-        // TODO: 실제 성공률 계산 로직 구현
         int errorCount = errorCounts.getOrDefault(category, 0);
         return errorCount == 0 ? 95.0 : Math.max(50.0, 95.0 - (errorCount * 10));
-    }
-
-    /**
-     * 카테고리와 URL을 묶는 내부 클래스
-     */
-    private static class CategoryUrl {
-        private final String category;
-        private final String url;
-
-        public CategoryUrl(String category, String url) {
-            this.category = category;
-            this.url = url;
-        }
-
-        public String getCategory() { return category; }
-        public String getUrl() { return url; }
     }
 }

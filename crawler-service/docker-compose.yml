@@ -28,6 +28,7 @@ services:
       retries: 3
     networks:
       - infra-network
+
   redis:
     image: redis:7-alpine
     platform: linux/amd64
@@ -54,6 +55,7 @@ services:
       options:
         max-size: "100m"
         max-file: "3"
+
   postgres:
     image: postgres:latest
     platform: linux/amd64  # M1/M2 Mac 호환성
@@ -75,7 +77,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-postgres:/docker-entrypoint-initdb.d
+      #- ./init-postgres:/docker-entrypoint-initdb.d
     networks:
       infra-network:
         aliases:
@@ -85,35 +87,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  kafka-connect:
-    image: debezium/connect:2.4
-    platform: linux/amd64
-    ports:
-      - "8083:8083"
-    environment:
-      GROUP_ID: 1
-      CONFIG_STORAGE_TOPIC: connect_configs
-      OFFSET_STORAGE_TOPIC: connect_offsets
-      STATUS_STORAGE_TOPIC: connect_statuses
-      BOOTSTRAP_SERVERS: kafka:29092  # 이제 Kafka가 실행 중이므로 연결 가능
-      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-    depends_on:
-      kafka:
-        condition: service_started  # 헬스 체크 대신 service_started 사용
-      postgres:
-        condition: service_healthy  # 이미 헬스 체크가 있는 서비스
-    healthcheck:  # 헬스 체크 추가
-      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s  # 시작 시간을 더 여유 있게 설정
-    networks:
-      - infra-network
+volumes:
+  redis_data:
+  postgres_data:
 
 networks:
   infra-network:
