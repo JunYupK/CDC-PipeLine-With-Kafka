@@ -25,10 +25,11 @@ import java.net.URL;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -47,6 +48,10 @@ public class CrawlerServiceImpl implements CrawlerService {
     private final Map<String, Integer> errorCounts = new ConcurrentHashMap<>();
     private final Map<String, LocalDateTime> lastExecutionTimes = new ConcurrentHashMap<>();
     private CompletableFuture<Void> currentCrawlTask;
+
+    // 하이브리드 크롤링을 위한 추가 필드
+    private final ConcurrentHashMap<String, Set<String>> visitedUrls = new ConcurrentHashMap<>();
+    private static final int WORKER_COUNT = 3; // Consumer 스레드 수
 
     @Override
     public CrawlStatusDto startCrawling(CrawlRequestDto request) {
@@ -145,13 +150,13 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     /**
-     * 비동기 크롤링 작업 실행
+     * 비동기 크롤링 작업 실행 (하이브리드 방식)
      */
     @Async("crawlerExecutor")
     protected CompletableFuture<Void> crawlAsync(CrawlRequestDto request) {
         return CompletableFuture.runAsync(() -> {
             try {
-                crawlJob(request.getCategory());
+                crawlJobHybrid(request.getCategory());
             } catch (Exception e) {
                 log.error("크롤링 작업 중 오류 발생", e);
                 handleCrawlingError(currentCategory.get(), e);
@@ -162,11 +167,10 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     /**
-     * 실제 크롤링 작업 수행 (Python의 crawling_job과 동일한 로직)
-     * 🔥 실제 Crawl4AIClient 사용으로 업데이트
+     * 하이브리드 방식 크롤링 작업
      */
-    private void crawlJob(String targetCategory) {
-        log.info("크롤링 작업 시작: targetCategory={}", targetCategory);
+    private void crawlJobHybrid(String targetCategory) {
+        log.info("하이브리드 크롤링 작업 시작: targetCategory={}", targetCategory);
 
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
 
@@ -175,15 +179,16 @@ public class CrawlerServiceImpl implements CrawlerService {
         Map<String, String> urlsToProcess = new HashMap<>();
 
         if (targetCategory == null) {
-            // 모든 카테고리 크롤링
             urlsToProcess.putAll(categoryUrls);
         } else if (categoryUrls.containsKey(targetCategory)) {
-            // 특정 카테고리만 크롤링
             urlsToProcess.put(targetCategory, categoryUrls.get(targetCategory));
         } else {
             log.warn("Unknown category: {}", targetCategory);
             return;
         }
+
+        // 각 카테고리별로 하이브리드 크롤링 실행
+        List<CompletableFuture<Void>> categoryFutures = new ArrayList<>();
 
         for (Map.Entry<String, String> entry : urlsToProcess.entrySet()) {
             if (Thread.currentThread().isInterrupted()) {
@@ -194,67 +199,121 @@ public class CrawlerServiceImpl implements CrawlerService {
             String category = entry.getKey();
             String url = entry.getValue();
 
-            try {
-                log.info("카테고리 크롤링 시작: {} - {}", category, timestamp);
-
-                // 메트릭 업데이트: 크롤링 시작
-                crawlerMetrics.updateCrawlStatus(category, true);
-                currentCategory.set(category);
-
-                long startTime = System.currentTimeMillis();
-
-                // 1. 메타데이터 크롤링 (실제 구현)
-                List<Article> articles = crawlNewsMetadata(url, category, timestamp);
-
-                if (articles != null && !articles.isEmpty()) {
-                    // 2. 내용 크롤링 (실제 구현)
-                    List<Article> articlesWithContent = crawlArticleContents(articles, category, timestamp);
-
-                    if (articlesWithContent != null && !articlesWithContent.isEmpty()) {
-                        // 3. 데이터베이스 저장
-                        saveArticlesToDatabase(articlesWithContent, category);
-
-                        // 4. 메트릭 업데이트
-                        long crawlTime = System.currentTimeMillis() - startTime;
-                        updateSuccessMetrics(category, articlesWithContent.size(), crawlTime);
-
-                        log.info("{} 카테고리 크롤링 완료: {}개 기사 처리", category, articlesWithContent.size());
-                    } else {
-                        log.warn("{} 카테고리 내용 크롤링 실패", category);
-                        updateFailureMetrics(category);
-                    }
-                } else {
-                    log.warn("{} 카테고리 메타데이터 크롤링 실패", category);
-                    updateFailureMetrics(category);
-                }
-
-            } catch (Exception e) {
-                log.error("{} 카테고리 크롤링 중 오류 발생", category, e);
-                handleCrawlingError(category, e);
-            } finally {
-                // 크롤링 상태 초기화
-                crawlerMetrics.updateCrawlStatus(category, false);
-                lastExecutionTimes.put(category, LocalDateTime.now());
-            }
-
-            // 카테고리 간 딜레이 (서버 부하 방지)
-            try {
-                Thread.sleep(2000); // 2초 대기
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
+            CompletableFuture<Void> categoryFuture = crawlCategoryHybrid(category, url, timestamp);
+            categoryFutures.add(categoryFuture);
         }
 
-        log.info("전체 크롤링 작업 완료");
+        // 모든 카테고리 크롤링 완료 대기
+        CompletableFuture.allOf(categoryFutures.toArray(new CompletableFuture[0])).join();
+
+        log.info("전체 하이브리드 크롤링 작업 완료");
     }
 
     /**
-     * 뉴스 메타데이터 크롤링 (실제 Crawl4AIClient 사용)
-     * 🔥 실제 구현으로 업데이트
+     * 카테고리별 하이브리드 크롤링
      */
-    private List<Article> crawlNewsMetadata(String url, String category, String timestamp) {
-        log.debug("메타데이터 크롤링 시작: {}", url);
+    private CompletableFuture<Void> crawlCategoryHybrid(String category, String baseUrl, String timestamp) {
+        log.info("카테고리 하이브리드 크롤링 시작: {} - {}", category, timestamp);
+
+        // 크롤링 상태 업데이트
+        crawlerMetrics.updateCrawlStatus(category, true);
+        currentCategory.set(category);
+
+        // Producer-Consumer 패턴을 위한 큐와 상태 관리
+        BlockingQueue<String> urlQueue = new LinkedBlockingQueue<>();
+        AtomicBoolean isProducerDone = new AtomicBoolean(false);
+        AtomicInteger processedCount = new AtomicInteger(0);
+        AtomicInteger errorCount = new AtomicInteger(0);
+
+        // 중복 방지를 위한 카테고리별 visited URLs 초기화
+        visitedUrls.computeIfAbsent(category, k -> ConcurrentHashMap.newKeySet());
+
+        long startTime = System.currentTimeMillis();
+
+        // URL 생산자 (Producer)
+        CompletableFuture<Void> producer = CompletableFuture.runAsync(() -> {
+            try {
+                crawlNewsMetadataProducer(baseUrl, category, timestamp, urlQueue, visitedUrls.get(category));
+            } catch (Exception e) {
+                log.error("URL 생산자 오류: {}", category, e);
+            } finally {
+                isProducerDone.set(true);
+                log.info("URL 생산자 완료: {}", category);
+            }
+        });
+
+        // 내용 소비자들 (Consumers)
+        List<CompletableFuture<Void>> consumers = new ArrayList<>();
+
+        for (int i = 0; i < WORKER_COUNT; i++) {
+            final int workerId = i;
+            CompletableFuture<Void> consumer = CompletableFuture.runAsync(() -> {
+                log.info("Consumer {} 시작: {}", workerId, category);
+
+                while (!isProducerDone.get() || !urlQueue.isEmpty()) {
+                    try {
+                        String articleUrl = urlQueue.poll(100, TimeUnit.MILLISECONDS);
+                        if (articleUrl != null) {
+                            Article article = crawlSingleArticleContent(articleUrl, category, timestamp);
+
+                            if (article != null) {
+                                saveArticleToDatabase(article, category);
+                                processedCount.incrementAndGet();
+                                log.debug("Worker {}: 기사 처리 완료 - {}", workerId, article.getTitle());
+                            } else {
+                                errorCount.incrementAndGet();
+                            }
+
+                            // 서버 부하 방지를 위한 딜레이
+                            Thread.sleep(1500);
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    } catch (Exception e) {
+                        log.error("Consumer {} 오류: {}", workerId, category, e);
+                        errorCount.incrementAndGet();
+                    }
+                }
+
+                log.info("Consumer {} 완료: {} - 처리: {}, 오류: {}",
+                        workerId, category, processedCount.get(), errorCount.get());
+            });
+
+            consumers.add(consumer);
+        }
+
+        // 모든 작업 완료 대기
+        return CompletableFuture.allOf(
+                Stream.concat(Stream.of(producer), consumers.stream()).toArray(CompletableFuture[]::new)
+        ).thenRun(() -> {
+            long crawlTime = System.currentTimeMillis() - startTime;
+
+            // 메트릭 업데이트
+            if (processedCount.get() > 0) {
+                updateSuccessMetrics(category, processedCount.get(), crawlTime);
+                log.info("{} 카테고리 크롤링 완료: {}개 기사 처리 (소요시간: {}ms)",
+                        category, processedCount.get(), crawlTime);
+            } else {
+                updateFailureMetrics(category);
+                log.warn("{} 카테고리 크롤링 실패: 처리된 기사 없음", category);
+            }
+
+            // 크롤링 상태 업데이트
+            crawlerMetrics.updateCrawlStatus(category, false);
+            lastExecutionTimes.put(category, LocalDateTime.now());
+
+            // 해당 카테고리의 visited URLs 정리 (메모리 절약)
+            visitedUrls.get(category).clear();
+        });
+    }
+
+    /**
+     * URL 수집 (Producer) - 메타데이터 크롤링 역할
+     */
+    private void crawlNewsMetadataProducer(String url, String category, String timestamp,
+                                           BlockingQueue<String> urlQueue, Set<String> visited) {
+        log.debug("메타데이터 크롤링 시작 (Producer): {}", url);
 
         try {
             // Crawl4AI 요청 생성
@@ -266,12 +325,12 @@ public class CrawlerServiceImpl implements CrawlerService {
 
             if (!result.isCrawlSuccessful()) {
                 log.error("메타데이터 크롤링 실패: {} - {}", url, result.getError());
-                return null;
+                return;
             }
 
             if (!result.hasExtractedContent()) {
                 log.warn("추출된 콘텐츠가 없음: {}", url);
-                return null;
+                return;
             }
 
             // JSON 파싱
@@ -280,105 +339,104 @@ public class CrawlerServiceImpl implements CrawlerService {
                     new TypeReference<List<Map<String, Object>>>() {}
             );
 
-            // Article 엔티티로 변환
-            List<Article> articles = new ArrayList<>();
+            // URL 큐에 추가
+            int addedCount = 0;
             for (Map<String, Object> item : extractedItems) {
                 String title = (String) item.get("title");
                 String link = (String) item.get("link");
 
-                // 유효성 검사
                 if (!StringUtils.hasText(title) || !StringUtils.hasText(link)) {
                     continue;
                 }
 
-                // 상대 URL을 절대 URL로 변환
                 String absoluteLink = convertToAbsoluteUrl(link, url);
 
-                Article article = Article.builder()
-                        .title(title.trim())
-                        .link(absoluteLink)
-                        .category(category)
-                        .storedDate(timestamp.substring(0, 8)) // YYYYMMDD 형식
-                        .source("네이버뉴스")
-                        .content("") // 나중에 채움
-                        .build();
-
-                articles.add(article);
+                // 중복 체크
+                if (visited.add(absoluteLink)) {
+                    urlQueue.offer(absoluteLink);
+                    addedCount++;
+                    log.trace("URL 큐에 추가: {}", absoluteLink);
+                }
             }
 
-            log.info("메타데이터 크롤링 완료: {}개 기사", articles.size());
-            return articles;
+            log.info("메타데이터 크롤링 완료: {}개 URL 추가됨", addedCount);
 
-        } catch (JsonProcessingException e) {
-            log.error("JSON 파싱 실패: {}", url, e);
-            return null;
         } catch (Exception e) {
             log.error("메타데이터 크롤링 실패: {}", url, e);
+        }
+    }
+
+    /**
+     * 단일 기사 내용 크롤링 (Consumer용)
+     */
+    private Article crawlSingleArticleContent(String articleUrl, String category, String timestamp) {
+        log.trace("기사 내용 크롤링: {}", articleUrl);
+
+        try {
+            Map<String, Object> contentSchema = NaverNewsSchemas.getSchemaForCategory(category, false);
+            Crawl4AIRequest request = Crawl4AIRequest.forArticleContent(articleUrl, contentSchema);
+
+            Crawl4AIResult result = crawl4AIClient.crawl(request);
+
+            if (result.isCrawlSuccessful() && result.hasExtractedContent()) {
+                List<Map<String, Object>> extractedContent = objectMapper.readValue(
+                        result.getResult().getExtractedContent(),
+                        new TypeReference<List<Map<String, Object>>>() {}
+                );
+
+                if (!extractedContent.isEmpty()) {
+                    Map<String, Object> contentData = extractedContent.get(0);
+                    String content = (String) contentData.get("content");
+
+                    if (StringUtils.hasText(content)) {
+                        Article article = Article.builder()
+                                .title((String) contentData.getOrDefault("title", "제목 없음"))
+                                .link(articleUrl)
+                                .content(content.trim())
+                                .category(category)
+                                .storedDate(timestamp.substring(0, 8))
+                                .source("네이버뉴스")
+                                .articleTextLength(content.length())
+                                .build();
+
+                        return article;
+                    }
+                }
+            }
+
+            log.warn("기사 내용 크롤링 실패: {}", articleUrl);
+            return null;
+
+        } catch (Exception e) {
+            log.error("기사 내용 크롤링 오류: {}", articleUrl, e);
             return null;
         }
     }
 
     /**
-     * 기사 내용 크롤링 (실제 Crawl4AIClient 사용)
-     * 🔥 실제 구현으로 업데이트
+     * 단일 기사 저장
      */
-    private List<Article> crawlArticleContents(List<Article> articles, String category, String timestamp) {
-        log.debug("기사 내용 크롤링 시작: {}개 기사", articles.size());
-
-        Map<String, Object> contentSchema = NaverNewsSchemas.getSchemaForCategory(category, false);
-        List<Article> successfulArticles = new ArrayList<>();
-
-        for (Article article : articles) {
-            if (Thread.currentThread().isInterrupted()) {
-                break;
+    private void saveArticleToDatabase(Article article, String category) {
+        try {
+            // URL 중복 체크
+            if (articleService.existsByUrl(article.getLink())) {
+                log.debug("이미 존재하는 기사 스킵: {}", article.getLink());
+                return;
             }
 
-            try {
-                // Crawl4AI 요청 생성
-                Crawl4AIRequest request = Crawl4AIRequest.forArticleContent(article.getLink(), contentSchema);
+            long startTime = System.currentTimeMillis();
+            articleService.saveArticle(article);
+            long saveTime = System.currentTimeMillis() - startTime;
 
-                // 실제 크롤링 실행
-                Crawl4AIResult result = crawl4AIClient.crawl(request);
+            crawlerMetrics.recordDbOperationTime(saveTime);
+            crawlerMetrics.incrementArticlesProcessed(category, 1);
 
-                if (result.isCrawlSuccessful() && result.hasExtractedContent()) {
-                    // JSON 파싱
-                    List<Map<String, Object>> extractedContent = objectMapper.readValue(
-                            result.getResult().getExtractedContent(),
-                            new TypeReference<List<Map<String, Object>>>() {}
-                    );
+            log.trace("기사 저장 완료: {} ({}ms)", article.getTitle(), saveTime);
 
-                    if (!extractedContent.isEmpty()) {
-                        Map<String, Object> contentData = extractedContent.get(0);
-                        String content = (String) contentData.get("content");
-
-                        if (StringUtils.hasText(content)) {
-                            // 기사 내용 업데이트
-                            article.setContent(content.trim());
-                            article.setArticleTextLength(content.length());
-                            successfulArticles.add(article);
-
-                            log.debug("기사 내용 크롤링 성공: {}", article.getTitle());
-                        }
-                    }
-                } else {
-                    log.warn("기사 내용 크롤링 실패: {} - {}", article.getLink(), result.getError());
-                }
-
-                // 딜레이 (봇 감지 방지)
-                Thread.sleep(1500); // 1.5초 대기
-
-            } catch (JsonProcessingException e) {
-                log.error("JSON 파싱 실패: {}", article.getLink(), e);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                log.error("기사 내용 크롤링 실패: {}", article.getLink(), e);
-            }
+        } catch (Exception e) {
+            log.error("기사 저장 실패: {}", article.getTitle(), e);
+            throw new RuntimeException("DB 저장 실패", e);
         }
-
-        log.info("기사 내용 크롤링 완료: {}/{}개 성공", successfulArticles.size(), articles.size());
-        return successfulArticles;
     }
 
     /**
@@ -403,35 +461,11 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
     /**
-     * 데이터베이스에 기사 저장
-     */
-    private void saveArticlesToDatabase(List<Article> articles, String category) {
-        try {
-            long startTime = System.currentTimeMillis();
-
-            List<Article> savedArticles = articleService.saveArticles(articles);
-
-            long saveTime = System.currentTimeMillis() - startTime;
-            crawlerMetrics.recordDbOperationTime(saveTime);
-
-            log.info("{} 카테고리 {}개 기사 DB 저장 완료 ({}ms)",
-                    category, savedArticles.size(), saveTime);
-
-        } catch (Exception e) {
-            log.error("{} 카테고리 DB 저장 실패", category, e);
-            throw new RuntimeException("DB 저장 실패", e);
-        }
-    }
-
-    /**
      * 성공 메트릭 업데이트
      */
     private void updateSuccessMetrics(String category, int articleCount, long crawlTime) {
         crawlerMetrics.incrementCrawlSuccess(category);
-        crawlerMetrics.incrementArticlesProcessed(category, articleCount);
         crawlerMetrics.recordCrawlTime(category, crawlTime);
-
-        // 에러 카운트 리셋
         errorCounts.put(category, 0);
     }
 
@@ -440,8 +474,6 @@ public class CrawlerServiceImpl implements CrawlerService {
      */
     private void updateFailureMetrics(String category) {
         crawlerMetrics.incrementCrawlFailure(category);
-
-        // 에러 카운트 증가
         errorCounts.merge(category, 1, Integer::sum);
     }
 
@@ -461,6 +493,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         currentCategory.set(null);
         crawlStartTime.set(null);
         currentCrawlTask = null;
+        visitedUrls.clear(); // 메모리 정리
     }
 
     /**
