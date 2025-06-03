@@ -155,14 +155,14 @@ public class CrawlerServiceImpl implements CrawlerService {
     @Async("crawlerExecutor")
     protected CompletableFuture<Void> crawlAsync(CrawlRequestDto request) {
         return CompletableFuture.runAsync(() -> {
-            try {
-                crawlJobHybrid(request.getCategory());
-            } catch (Exception e) {
-                log.error("크롤링 작업 중 오류 발생", e);
-                handleCrawlingError(currentCategory.get(), e);
-            } finally {
-                resetCrawlingState();
-            }
+//            try {
+//                crawlJobHybrid(request.getCategory());
+//            } catch (Exception e) {
+//                log.error("크롤링 작업 중 오류 발생", e);
+//                handleCrawlingError(currentCategory.get(), e);
+//            } finally {
+//                resetCrawlingState();
+//            }
         });
     }
 

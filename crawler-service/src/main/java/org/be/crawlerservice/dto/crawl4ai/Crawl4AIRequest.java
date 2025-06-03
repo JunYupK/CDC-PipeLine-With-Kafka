@@ -1,10 +1,12 @@
 package org.be.crawlerservice.dto.crawl4ai;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -14,19 +16,21 @@ import java.util.Map;
 public class Crawl4AIRequest {
 
     /**
-     * 크롤링할 URL (단일 URL 문자열)
+     * 크롤링할 URL 배열 (Crawl4AI는 배열을 기대함)
      */
-    private String urls;
+    private List<String> urls;
 
     /**
-     * 추출 설정
+     * 브라우저 설정 (Crawl4AI Docker API 형식)
      */
-    private ExtractionConfig extractionConfig;
+    @JsonProperty("browser_config")
+    private ConfigWrapper browserConfig;
 
     /**
-     * 크롤러 파라미터
+     * 크롤러 설정 (Crawl4AI Docker API 형식)
      */
-    private CrawlerParams crawlerParams;
+    @JsonProperty("crawler_config")
+    private ConfigWrapper crawlerConfig;
 
     /**
      * 우선순위 (1-10, 높을수록 우선)
@@ -35,103 +39,59 @@ public class Crawl4AIRequest {
     private Integer priority = 5;
 
     /**
-     * 추가 파라미터
+     * Crawl4AI Docker API가 기대하는 설정 래퍼 클래스
      */
-    private Map<String, Object> extra;
-
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class ExtractionConfig {
+    public static class ConfigWrapper {
         /**
-         * 추출 타입 ("json_css")
+         * 설정 타입 ("BrowserConfig" 또는 "CrawlerRunConfig")
          */
         private String type;
 
         /**
-         * 추출 파라미터 (스키마 포함)
+         * 실제 파라미터들
          */
-        private ExtractionParams params;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class ExtractionParams {
-        /**
-         * CSS 추출 스키마
-         */
-        private Map<String, Object> schema;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class CrawlerParams {
-        /**
-         * 헤드리스 모드 여부
-         */
-        @Builder.Default
-        private Boolean headless = true;
-
-        /**
-         * 페이지 타임아웃 (밀리초)
-         */
-        @Builder.Default
-        private Long pageTimeout = 60000L;
-
-        /**
-         * 대기 조건 ("domcontentloaded", "networkidle", "load")
-         */
-        @Builder.Default
-        private String waitUntil = "domcontentloaded";
-
-        /**
-         * HTML 반환 전 지연 시간 (초)
-         */
-        @Builder.Default
-        private Double delayBeforeReturnHtml = 0.0;
-
-        /**
-         * 스크린샷 캡처 여부
-         */
-        @Builder.Default
-        private Boolean screenshot = false;
-
-        /**
-         * 대기할 CSS 선택자
-         */
-        private String waitFor;
-
-        /**
-         * 실행할 JavaScript 코드
-         */
-        private String jsCode;
+        private Map<String, Object> params;
     }
 
     // === 팩토리 메서드들 ===
 
     /**
-     * URL 목록 크롤링용 요청 생성
+     * URL 목록 크롤링용 요청 생성 (CSS 추출 포함)
      */
     public static Crawl4AIRequest forUrlList(String url, Map<String, Object> schema) {
+        // 브라우저 설정
+        ConfigWrapper browserConfig = ConfigWrapper.builder()
+                .type("BrowserConfig")
+                .params(Map.of(
+                        "headless", true,
+                        "viewport_width", 1920,
+                        "viewport_height", 1080
+                ))
+                .build();
+
+        // 크롤러 설정 (추출 전략 포함)
+        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
+                .type("CrawlerRunConfig")
+                .params(Map.of(
+                        "cache_mode", "bypass",
+                        "wait_until", "domcontentloaded",
+                        "page_timeout", 60000,
+                        "extraction_strategy", Map.of(
+                                "type", "JsonCssExtractionStrategy",
+                                "params", Map.of("schema", schema)
+                        )
+                ))
+                .build();
+
         return Crawl4AIRequest.builder()
-                .urls(url)
-                .extractionConfig(ExtractionConfig.builder()
-                        .type("json_css")
-                        .params(ExtractionParams.builder()
-                                .schema(schema)
-                                .build())
-                        .build())
-                .crawlerParams(CrawlerParams.builder()
-                        .headless(true)
-                        .pageTimeout(60000L)
-                        .waitUntil("domcontentloaded")
-                        .build())
-                .priority(10) // 목록 페이지는 높은 우선순위
+                .urls(List.of(url))
+                .browserConfig(browserConfig)
+                .crawlerConfig(crawlerConfig)
+                .priority(10)
                 .build();
     }
 
@@ -139,20 +99,36 @@ public class Crawl4AIRequest {
      * 기사 내용 크롤링용 요청 생성
      */
     public static Crawl4AIRequest forArticleContent(String url, Map<String, Object> schema) {
+        // 브라우저 설정
+        ConfigWrapper browserConfig = ConfigWrapper.builder()
+                .type("BrowserConfig")
+                .params(Map.of(
+                        "headless", true,
+                        "viewport_width", 1920,
+                        "viewport_height", 1080
+                ))
+                .build();
+
+        // 크롤러 설정
+        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
+                .type("CrawlerRunConfig")
+                .params(Map.of(
+                        "cache_mode", "bypass",
+                        "wait_until", "domcontentloaded",
+                        "page_timeout", 60000,
+                        "delay_before_return_html", 2.0,
+                        "extraction_strategy", Map.of(
+                                "type", "JsonCssExtractionStrategy",
+                                "params", Map.of("schema", schema)
+                        )
+                ))
+                .build();
+
         return Crawl4AIRequest.builder()
-                .urls(url)
-                .extractionConfig(ExtractionConfig.builder()
-                        .type("json_css")
-                        .params(ExtractionParams.builder()
-                                .schema(schema)
-                                .build())
-                        .build())
-                .crawlerParams(CrawlerParams.builder()
-                        .headless(true)
-                        .pageTimeout(60000L)
-                        .delayBeforeReturnHtml(2.0)
-                        .build())
-                .priority(8) // 개별 기사는 보통 우선순위
+                .urls(List.of(url))
+                .browserConfig(browserConfig)
+                .crawlerConfig(crawlerConfig)
+                .priority(8)
                 .build();
     }
 
@@ -160,12 +136,59 @@ public class Crawl4AIRequest {
      * 기본 크롤링 요청 생성 (추출 전략 없음)
      */
     public static Crawl4AIRequest forBasicCrawl(String url) {
+        // 브라우저 설정
+        ConfigWrapper browserConfig = ConfigWrapper.builder()
+                .type("BrowserConfig")
+                .params(Map.of(
+                        "headless", true,
+                        "viewport_width", 1920,
+                        "viewport_height", 1080
+                ))
+                .build();
+
+        // 크롤러 설정 (추출 전략 없음)
+        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
+                .type("CrawlerRunConfig")
+                .params(Map.of(
+                        "cache_mode", "bypass",
+                        "wait_until", "domcontentloaded",
+                        "page_timeout", 60000
+                ))
+                .build();
+
         return Crawl4AIRequest.builder()
-                .urls(url)
-                .crawlerParams(CrawlerParams.builder()
-                        .headless(true)
-                        .pageTimeout(60000L)
-                        .build())
+                .urls(List.of(url))
+                .browserConfig(browserConfig)
+                .crawlerConfig(crawlerConfig)
+                .priority(5)
+                .build();
+    }
+
+    /**
+     * 단순 텍스트 크롤링 (마크다운만)
+     */
+    public static Crawl4AIRequest forTextOnly(String url) {
+        ConfigWrapper browserConfig = ConfigWrapper.builder()
+                .type("BrowserConfig")
+                .params(Map.of(
+                        "headless", true,
+                        "text_mode", true  // 이미지 비활성화
+                ))
+                .build();
+
+        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
+                .type("CrawlerRunConfig")
+                .params(Map.of(
+                        "cache_mode", "bypass",
+                        "word_count_threshold", 50,
+                        "excluded_tags", List.of("script", "style", "nav", "footer")
+                ))
+                .build();
+
+        return Crawl4AIRequest.builder()
+                .urls(List.of(url))
+                .browserConfig(browserConfig)
+                .crawlerConfig(crawlerConfig)
                 .priority(5)
                 .build();
     }

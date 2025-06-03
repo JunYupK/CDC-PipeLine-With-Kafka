@@ -49,6 +49,8 @@ public class Crawl4AIResult {
      */
     private LocalDateTime completedTime;
 
+    private String extracted_content;
+
     @Data
     @Builder
     @NoArgsConstructor
