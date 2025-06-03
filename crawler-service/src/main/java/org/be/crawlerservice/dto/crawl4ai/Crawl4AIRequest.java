@@ -63,26 +63,24 @@ public class Crawl4AIRequest {
      * URL 목록 크롤링용 요청 생성 (CSS 추출 포함)
      */
     public static Crawl4AIRequest forUrlList(String url, Map<String, Object> schema) {
-        // 브라우저 설정
+//        // 브라우저 설정
         ConfigWrapper browserConfig = ConfigWrapper.builder()
                 .type("BrowserConfig")
                 .params(Map.of(
-                        "headless", true,
-                        "viewport_width", 1920,
-                        "viewport_height", 1080
+                        "headless", true
                 ))
                 .build();
-
-        // 크롤러 설정 (추출 전략 포함)
+//
+//        // 크롤러 설정 (추출 전략 포함)
         ConfigWrapper crawlerConfig = ConfigWrapper.builder()
                 .type("CrawlerRunConfig")
                 .params(Map.of(
                         "cache_mode", "bypass",
-                        "wait_until", "domcontentloaded",
                         "page_timeout", 60000,
+                        "delay_before_return_html", 2.0,
                         "extraction_strategy", Map.of(
                                 "type", "JsonCssExtractionStrategy",
-                                "params", Map.of("schema", schema)
+                                "params", schema
                         )
                 ))
                 .build();

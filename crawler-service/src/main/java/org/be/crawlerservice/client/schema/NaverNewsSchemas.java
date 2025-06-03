@@ -239,21 +239,30 @@ public class NaverNewsSchemas {
      */
     public static Map<String, Object> getSimpleLinkSchema() {
         return Map.of(
-                "name", "Simple Links",
-                "baseSelector", "a", // 모든 링크
-                "fields", List.of(
-                        Map.of(
-                                "name", "text",
-                                "selector", ".",
-                                "type", "text"
-                        ),
-                        Map.of(
-                                "name", "href",
-                                "selector", ".",
-                                "type", "attribute",
-                                "attribute", "href"
+
+                        "schema", Map.of(
+                                "type", "dict",              // ✅ dict 래핑 추가
+                                "value", Map.of(             // ✅ value 래핑 추가
+                                        "name", "Simple Links",
+                                        "baseSelector", "li",  // 링크 요소만 선택
+                                        "fields", List.of(
+                                                Map.of(
+                                                        "name","title",
+                                                        "selector", "div.sa_text > a > strong, a.sa_text_title > strong.sa_text_strong",
+                                                        "type", "text"
+                                                ),
+                                                Map.of(
+                                                        "name","link",
+                                                        "selector", "div.sa_text > a, a.sa_text_title",
+                                                        "type", "attribute",
+                                                        "attribute", "href"
+                                                )
+                                        )
+                                )
                         )
-                )
+
         );
     }
+
+
 }

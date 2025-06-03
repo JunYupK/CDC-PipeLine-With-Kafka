@@ -56,17 +56,23 @@ public class Crawl4AIClient {
             String requestJson = objectMapper.writeValueAsString(request);
             log.debug("요청 JSON: {}", requestJson);
 
-            // 1. 작업 제출
-            String taskId = submitCrawlTask(request, requestJson);
-            if (taskId == null) {
-                return Crawl4AIResult.failed(null, "Failed to submit crawl task");
+
+            String crawlUrl = crawlerProperties.getCrawl4aiUrl() + "/crawl";
+            log.debug("크롤링 엔드포인트: {}", crawlUrl);
+            HttpHeaders headers = createHeaders();
+            HttpEntity<String> requestEntity = new HttpEntity<>(requestJson, headers);
+
+            ResponseEntity<String> response = restTemplate.postForEntity(crawlUrl, requestEntity, String.class);
+
+            log.debug("응답 상태: {}, 본문: {}", response.getStatusCode(),
+                    response.getBody() != null ? response.getBody().substring(0, Math.min(200, response.getBody().length())) : "null");
+
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JsonNode responseJson = objectMapper.readTree(response.getBody());
+                Crawl4AIResult result = parseStatusResponse(response.getBody());
+                return result;
             }
-
-            log.info("작업 제출 성공. Task ID: {}", taskId);
-
             // 2. 결과 폴링
-            return pollForResult(taskId, pollInterval, timeoutSeconds);
-
         } catch (JsonProcessingException e) {
             log.error("JSON 직렬화 실패", e);
             throw new CrawlException("JSON serialization failed: " + e.getMessage(), e);
@@ -74,6 +80,7 @@ public class Crawl4AIClient {
             log.error("크롤링 작업 실패: URLs={}", request.getUrls(), e);
             throw new CrawlException("Crawl operation failed: " + e.getMessage(), e);
         }
+        return null;
 
 
     }
@@ -105,198 +112,81 @@ public class Crawl4AIClient {
         }
     }
 
-    /**
-     * 1단계: 크롤링 작업 제출 (개선된 로깅)
-     */
-    private String submitCrawlTask(Crawl4AIRequest request, String requestJson) {
-        String crawlUrl = crawlerProperties.getCrawl4aiUrl() + "/crawl";
-        log.debug("크롤링 엔드포인트: {}", crawlUrl);
 
-        HttpHeaders headers = createHeaders();
-        HttpEntity<String> requestEntity = new HttpEntity<>(requestJson, headers);
-
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                log.debug("작업 제출 시도 {}/{}: URLs={}", attempt, MAX_RETRIES, request.getUrls());
-
-                ResponseEntity<String> response = restTemplate.postForEntity(crawlUrl, requestEntity, String.class);
-
-                log.debug("응답 상태: {}, 본문: {}", response.getStatusCode(),
-                        response.getBody() != null ? response.getBody().substring(0, Math.min(200, response.getBody().length())) : "null");
-
-                if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                    JsonNode responseJson = objectMapper.readTree(response.getBody());
-
-                    if (responseJson.has("task_id")) {
-                        String taskId = responseJson.get("task_id").asText();
-                        if (taskId != null && !taskId.isEmpty()) {
-                            log.debug("Task ID 추출 성공: {}", taskId);
-                            return taskId;
-                        } else {
-                            log.error("빈 task_id 수신: {}", responseJson);
-                        }
-                    } else {
-                        log.error("task_id 필드 없음. 응답: {}", responseJson);
-                    }
-                } else {
-                    log.error("작업 제출 실패 ({}): {}", response.getStatusCode(), response.getBody());
-                }
-
-            } catch (RestClientException e) {
-                log.warn("네트워크 오류로 작업 제출 실패 (시도 {}/{}): {}", attempt, MAX_RETRIES, e.getMessage());
-                if (e.getMessage().contains("Connection refused")) {
-                    log.error("Crawl4AI 서버에 연결할 수 없습니다. Docker 컨테이너가 실행 중인지 확인하세요.");
-                }
-            } catch (JsonProcessingException e) {
-                log.error("JSON 파싱 실패 (시도 {}/{}): {}", attempt, MAX_RETRIES, e.getMessage());
-            } catch (Exception e) {
-                log.error("예상치 못한 오류 (시도 {}/{}): {}", attempt, MAX_RETRIES, e.getMessage(), e);
-            }
-
-            if (attempt < MAX_RETRIES) {
-                try {
-                    Thread.sleep(RETRY_DELAY * attempt); // 지수 백오프
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * 2단계: 결과 폴링 (개선된 로깅)
-     */
-    private Crawl4AIResult pollForResult(String taskId, int pollInterval, int timeoutSeconds) {
-        String statusUrl = crawlerProperties.getCrawl4aiUrl() + "/task/" + taskId;
-        //log.debug("상태 확인 URL: {}", statusUrl);
-
-        HttpHeaders headers = createHeaders();
-        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
-
-        long startTime = System.currentTimeMillis();
-        long timeoutMillis = timeoutSeconds * 1000L;
-        int pollCount = 0;
-
-        while (System.currentTimeMillis() - startTime < timeoutMillis) {
-            try {
-                // 폴링 간격 대기
-                Thread.sleep(pollInterval * 1000L);
-                pollCount++;
-
-                //log.trace("상태 확인 #{} for task: {}", pollCount, taskId);
-
-                ResponseEntity<String> response = restTemplate.exchange(
-                        statusUrl, HttpMethod.GET, requestEntity, String.class);
-
-                if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                    //log.trace("상태 응답: {}", response.getBody().substring(0, Math.min(200, response.getBody().length())));
-                    Crawl4AIResult result = parseStatusResponse(taskId, response.getBody());
-
-                    if (result.isCompleted()) {
-                        //log.info("작업 {} 완료 성공 ({}초 후)", taskId, (System.currentTimeMillis() - startTime) / 1000);
-                        return result;
-                    } else if (result.isFailed()) {
-                        //log.error("작업 {} 실패: {}", taskId, result.getError());
-                        return result;
-                    } else {
-                        //log.debug("작업 {} 상태: {} (폴링 #{})", taskId, result.getStatus(), pollCount);
-                        // 계속 폴링
-                    }
-                } else {
-                   // log.warn("상태 확인 실패 task {} ({}): {}",
-                            //taskId, response.getStatusCode(), response.getBody());
-
-                    // 상태 확인 실패 시 잠시 후 재시도
-                    Thread.sleep(pollInterval * 2000L);
-                }
-
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-               //log.warn("폴링 중단: {}", taskId);
-                return Crawl4AIResult.failed(taskId, "Polling interrupted");
-            } catch (RestClientException | JsonProcessingException e) {
-                //log.warn("상태 확인 중 네트워크 오류 task {}: {}. 재시도...", taskId, e.getMessage());
-                try {
-                    Thread.sleep(pollInterval * 2000L);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }
-
-        // 타임아웃
-        log.error("작업 {} 타임아웃 ({}초 후)", taskId, timeoutSeconds);
-        return Crawl4AIResult.failed(taskId, String.format("Task timed out after %d seconds", timeoutSeconds));
-    }
 
     /**
      * 상태 응답 파싱 (수정된 버전 - results 배열 처리)
      */
-    private Crawl4AIResult parseStatusResponse(String taskId, String responseBody) throws JsonProcessingException {
+    private Crawl4AIResult parseStatusResponse(String responseBody) throws JsonProcessingException {
         JsonNode responseJson = objectMapper.readTree(responseBody);
 
         // 전체 응답 구조 로깅 (디버깅용)
         log.debug("=== Crawl4AI 응답 구조 분석 ===");
-        log.debug("Task ID: {}", taskId);
         //log.debug("전체 응답: {}", responseJson.toPrettyString());
+        //String status = responseJson.get("status").asText();
+        //log.debug("상태: {}", status);
 
-        String status = responseJson.get("status").asText();
-        log.debug("상태: {}", status);
+        Crawl4AIResult.Crawl4AIResultBuilder resultBuilder = Crawl4AIResult.builder();
 
-        Crawl4AIResult.Crawl4AIResultBuilder resultBuilder = Crawl4AIResult.builder()
-                .taskId(taskId)
-                .status(status);
 
-        if ("completed".equals(status)) {
-            // "result" 또는 "results" 노드 확인
-            JsonNode resultNode = responseJson.get("result");
-            JsonNode resultsNode = responseJson.get("results");
+        JsonNode resultNode = responseJson.get("results");
+        log.info("=== 디버깅: 실제 데이터 확인 ===");
 
-            log.debug("result 노드 존재: {}", resultNode != null);
-            log.debug("results 노드 존재: {}", resultsNode != null);
-
-            if (resultNode != null) {
-                // 단일 result 노드 처리 (기존 방식)
-                log.debug("단일 result 노드 처리");
-                log.debug("result 내용: {}", resultNode.toPrettyString());
-
-                Crawl4AIResult.CrawlResult crawlResult = parseCrawlResult(resultNode);
-                resultBuilder.result(crawlResult).completedTime(LocalDateTime.now());
-
-            } else if (resultsNode != null && resultsNode.isArray() && resultsNode.size() > 0) {
-                // results 배열 처리 (새로운 방식)
-                log.debug("results 배열 처리 - 배열 크기: {}", resultsNode.size());
-                JsonNode firstResult = resultsNode.get(0);
-                //log.debug("첫 번째 결과 내용: {}", firstResult.toPrettyString());
-
-                // 첫 번째 결과의 모든 필드 로깅
-//                firstResult.fieldNames().forEachRemaining(fieldName -> {
-//                    JsonNode fieldValue = firstResult.get(fieldName);
-//                    if (fieldValue.isTextual() && fieldValue.asText().length() > 100) {
-//                        log.debug("  - {}: {}... (길이: {})", fieldName,
-//                                fieldValue.asText().substring(0, 100), fieldValue.asText().length());
-//                    } else {
-//                        log.debug("  - {}: {} (타입: {})", fieldName, fieldValue.toString(), fieldValue.getNodeType());
-//                    }
-//                });
-
-                Crawl4AIResult.CrawlResult crawlResult = parseCrawlResult(firstResult);
-                resultBuilder.result(crawlResult).completedTime(LocalDateTime.now());
-
-            } else {
-                log.warn("완료된 작업이지만 result 또는 results 노드가 없거나 비어있음: {}", taskId);
-            }
-        } else if ("failed".equals(status)) {
-            String error = responseJson.has("error") ? responseJson.get("error").asText() : "Unknown error";
-            log.debug("실패 오류: {}", error);
-            resultBuilder.error(error).completedTime(LocalDateTime.now());
+        // HTML 길이 확인
+        if (resultNode.has("html")) {
+            String html = resultNode.get("html").asText();
+            log.info("HTML 길이: {}", html.length());
         }
 
-        log.debug("=== 응답 구조 분석 완료 ===");
+        // cleaned_html 길이 확인
+        if (resultNode.has("cleaned_html")) {
+            String cleanedHtml = resultNode.get("cleaned_html").asText();
+            log.info("Cleaned HTML 길이: {}", cleanedHtml.length());
+        }
+
+        // markdown 구조 확인
+        if (resultNode.has("markdown")) {
+            JsonNode markdownNode = resultNode.get("markdown");
+            log.info("Markdown 타입: {}", markdownNode.getNodeType());
+            if (markdownNode.isObject()) {
+                log.info("raw_markdown 길이: {}",
+                        getTextValue(markdownNode, "raw_markdown").length());
+            }
+        }
+
+        // extracted_content 확인
+        if (resultNode.has("extracted_content")) {
+            JsonNode extracted = resultNode.get("extracted_content");
+            log.info("Extracted content - null: {}, 빈문자열: {}",
+                    extracted.isNull(),
+                    !extracted.isNull() && extracted.asText().isEmpty());
+        }
+        JsonNode firstResult = resultNode.get(0);
+
+        log.info("=== 필드별 상세 분석 ===");
+        log.info("html 존재: {}, 값: {}", firstResult.has("html"),
+                firstResult.has("html") ? firstResult.get("html").getNodeType() : "없음");
+        log.info("cleaned_html 존재: {}, 값: {}", firstResult.has("cleaned_html"),
+                firstResult.has("cleaned_html") ? firstResult.get("cleaned_html").getNodeType() : "없음");
+        log.info("extracted_content 존재: {}, 값: {}", firstResult.has("extracted_content"),
+                firstResult.has("extracted_content") ? firstResult.get("extracted_content").getNodeType() : "없음");
+        System.out.println(firstResult.get("extracted_content"));
+        Crawl4AIResult.CrawlResult crawlResult = parseCrawlResult(firstResult);
+        resultBuilder.result(crawlResult).completedTime(LocalDateTime.now());
+
+        System.out.println("=== EXTRACTED CONTENT 상세 분석 ===");
+        JsonNode extractedNode = firstResult.get("extracted_content");
+        System.out.println("extracted_content 타입: " + extractedNode.getNodeType());
+        System.out.println("extracted_content isNull: " + extractedNode.isNull());
+        System.out.println("extracted_content 원본: " + extractedNode.toString());
+        System.out.println("extracted_content asText: '" + extractedNode.asText() + "'");
+
+//        // 🔍 links 객체도 확인
+//        JsonNode linksNode = firstResult.get("links");
+//        System.out.println("=== LINKS 객체 확인 ===");
+//        System.out.println(linksNode.toPrettyString());
+
+
         return resultBuilder.build();
     }
 
@@ -305,46 +195,48 @@ public class Crawl4AIClient {
      */
     private Crawl4AIResult.CrawlResult parseCrawlResult(JsonNode resultNode) {
         Crawl4AIResult.CrawlResult.CrawlResultBuilder builder = Crawl4AIResult.CrawlResult.builder();
-        System.out.println("result check");
-        List<String> keys = new ArrayList<>();
-        Iterator<String> fieldNames = resultNode.fieldNames();
-        while (fieldNames.hasNext()) {
-            keys.add(fieldNames.next());
-        }
-        System.out.println(keys);
+
         // 기본 필드들
-        if (resultNode.has("html")) {
-            builder.html(resultNode.get("html").asText());
+        builder.html(getTextValue(resultNode, "html"));
+        builder.cleanedHtml(getTextValue(resultNode, "cleaned_html"));
+
+        // ✅ markdown 객체 처리
+        if (resultNode.has("markdown") && !resultNode.get("markdown").isNull()) {
+            JsonNode markdownNode = resultNode.get("markdown");
+            if (markdownNode.isObject()) {
+                // raw_markdown 사용
+                String rawMarkdown = getTextValue(markdownNode, "raw_markdown");
+                builder.markdown(rawMarkdown);
+
+                // 추가 마크다운 정보도 저장 가능
+                String fitMarkdown = getTextValue(markdownNode, "fit_markdown");
+                // builder.fitMarkdown(fitMarkdown); // 필요시 추가
+            } else {
+                // 혹시 문자열인 경우 대비
+                builder.markdown(markdownNode.asText());
+            }
         }
-        if (resultNode.has("cleaned_html")) {
-            System.out.println("클린클린");
-            builder.cleanedHtml(resultNode.get("cleaned_html").asText());
-        }
-        if (resultNode.has("markdown")) {
-            builder.markdown(resultNode.get("markdown").asText());
-        }
+
+        // ✅ extracted_content 처리 (null vs 빈문자열 구분)
         if (resultNode.has("extracted_content")) {
-            System.out.println("추출 추출");
-            System.out.println("추출 추출");
-            System.out.println(resultNode.get("extracted_content"));
-            builder.extractedContent(resultNode.get("extracted_content").asText());
+            JsonNode extractedNode = resultNode.get("extracted_content");
+            if (!extractedNode.isNull()) {
+                String extracted = extractedNode.asText();
+                builder.extractedContent(extracted.isEmpty() ? null : extracted);
+            }
         }
-        if (resultNode.has("success")) {
-            builder.success(resultNode.get("success").asBoolean());
-        }
-        if (resultNode.has("status_code")) {
-            builder.statusCode(resultNode.get("status_code").asInt());
-        }
-        if (resultNode.has("screenshot")) {
-            builder.screenshot(resultNode.get("screenshot").asText());
-        }
-        if (resultNode.has("pdf")) {
-            builder.pdf(resultNode.get("pdf").asText());
-        }
+
+
 
         return builder.build();
     }
-
+    private String getTextValue(JsonNode node, String fieldName) {
+        if (node.has(fieldName) && !node.get(fieldName).isNull()) {
+            String value = node.get(fieldName).asText();
+            return value.isEmpty() ? null : value;
+        }
+        return null;
+    }
     /**
      * HTTP 헤더 생성
      */

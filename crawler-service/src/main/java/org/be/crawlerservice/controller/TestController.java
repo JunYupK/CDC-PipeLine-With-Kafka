@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.be.crawlerservice.client.Crawl4AIClient;
 import org.be.crawlerservice.client.schema.NaverNewsSchemas;
+import org.be.crawlerservice.config.CrawlerProperties;
 import org.be.crawlerservice.dto.crawl4ai.Crawl4AIRequest;
 import org.be.crawlerservice.dto.crawl4ai.Crawl4AIResult;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +21,7 @@ import java.util.Map;
 public class TestController {
 
     private final Crawl4AIClient crawl4AIClient;
+    private final CrawlerProperties crawlerProperties;
 
     /**
      * Crawl4AI 서버 헬스 체크
@@ -173,12 +175,13 @@ public class TestController {
             log.info("스키마 1: 개선된 네이버 뉴스 스키마 테스트");
             Map<String, Object> schema1 = NaverNewsSchemas.getSimpleLinkSchema();
             Crawl4AIRequest request1 = Crawl4AIRequest.forUrlList(url, schema1);
-            Crawl4AIResult result1 = crawl4AIClient.crawl(request1);
-            Crawl4AIResult.CrawlResult crawlResult = result1.getResult();
 
-            System.out.println("으아악 : " + result1.getExtracted_content());
-            System.out.println("으아악 : " + crawlResult.getExtractedContent());
-            System.out.println("으아악 : " + crawlResult.getLinks());
+            Crawl4AIResult result1 = crawl4AIClient.crawl(request1);
+            //Crawl4AIResult.CrawlResult crawlResult = result1.getResult();
+
+//            System.out.println("으아악 : " + result1.getExtracted_content());
+//            System.out.println("으아악 : " + crawlResult.getExtractedContent());
+//            System.out.println("으아악 : " + crawlResult.getLinks());
 
             results.put("schema1_improved", Map.of(
                     "success", result1.isCrawlSuccessful(),
