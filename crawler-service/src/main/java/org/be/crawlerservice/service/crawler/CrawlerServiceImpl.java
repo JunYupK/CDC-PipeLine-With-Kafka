@@ -22,6 +22,7 @@ import org.be.crawlerservice.metrics.CrawlerMetrics;
 import org.be.crawlerservice.repository.ArticleRepository;
 import org.be.crawlerservice.repository.MediaRepository;
 import org.be.crawlerservice.service.article.ArticleService;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -55,6 +56,8 @@ public class CrawlerServiceImpl implements CrawlerService {
     private final Map<String, LocalDateTime> lastExecutionTimes = new ConcurrentHashMap<>();
     private final MediaRepository mediaRepository;
     private CompletableFuture<Void> currentCrawlTask;
+    private final AtomicInteger processedCount = new AtomicInteger(0);
+    private final AtomicInteger totalCount = new AtomicInteger(0);
 
     // 하이브리드 크롤링을 위한 추가 필드
     private final ConcurrentHashMap<String, Set<String>> visitedUrls = new ConcurrentHashMap<>();
@@ -72,9 +75,21 @@ public class CrawlerServiceImpl implements CrawlerService {
         isCrawling.set(true);
         currentCategory.set(request.getCategory());
         crawlStartTime.set(LocalDateTime.now());
+        processedCount.set(0);
+        totalCount.set(0);
 
-        // 비동기로 크롤링 작업 시작
-        crwalBasic();
+        // 🔥 CompletableFuture로 비동기 실행
+        CompletableFuture.runAsync(() -> {
+            try {
+                log.info("비동기 크롤링 작업 시작");
+                crawlBasic();
+                log.info("크롤링 작업 완료 - 총 처리: {}개", processedCount.get());
+            } catch (Exception e) {
+                log.error("크롤링 작업 중 에러 발생", e);
+            } finally {
+                isCrawling.set(false);
+            }
+        });
 
         return CrawlStatusDto.builder()
                 .status(CrawlerStatus.RUNNING)
@@ -82,6 +97,22 @@ public class CrawlerServiceImpl implements CrawlerService {
                 .startTime(crawlStartTime.get())
                 .message("크롤링이 시작되었습니다")
                 .build();
+    }
+    // 🔥 비동기 크롤링 메서드
+    @Async("crawlingExecutor")
+    public void crawlBasicAsync() {
+        try {
+            log.info("비동기 크롤링 작업 시작");
+            crawlBasic();
+
+            // 크롤링 완료 처리
+            isCrawling.set(false);
+            log.info("크롤링 작업 완료 - 총 처리: {}개", processedCount.get());
+
+        } catch (Exception e) {
+            log.error("크롤링 작업 중 에러 발생", e);
+            isCrawling.set(false);
+        }
     }
 
     @Override
@@ -157,7 +188,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
 
-    private void crwalBasic() {
+    private void crawlBasic() {
         NaverNewsSchemas.getCategoryUrls().keySet().forEach(category -> {
             try {
                 log.info("카테고리 {} 크롤링 시작", category);
