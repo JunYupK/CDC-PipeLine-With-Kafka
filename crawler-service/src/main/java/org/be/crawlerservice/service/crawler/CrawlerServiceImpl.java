@@ -2,7 +2,10 @@ package org.be.crawlerservice.service.crawler;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.be.crawlerservice.client.Crawl4AIClient;
@@ -13,10 +16,12 @@ import org.be.crawlerservice.dto.request.CrawlRequestDto;
 import org.be.crawlerservice.dto.response.CrawlStatusDto;
 import org.be.crawlerservice.dto.response.StatsResponseDto;
 import org.be.crawlerservice.entity.Article;
+import org.be.crawlerservice.entity.Media;
 import org.be.crawlerservice.enums.CrawlerStatus;
 import org.be.crawlerservice.metrics.CrawlerMetrics;
+import org.be.crawlerservice.repository.ArticleRepository;
+import org.be.crawlerservice.repository.MediaRepository;
 import org.be.crawlerservice.service.article.ArticleService;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -40,6 +45,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     private final CrawlerMetrics crawlerMetrics;
     private final Crawl4AIClient crawl4AIClient;
     private final ObjectMapper objectMapper;
+    private final ArticleRepository articleRepository;
 
     // 크롤링 상태 관리
     private final AtomicBoolean isCrawling = new AtomicBoolean(false);
@@ -47,6 +53,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     private final AtomicReference<LocalDateTime> crawlStartTime = new AtomicReference<>();
     private final Map<String, Integer> errorCounts = new ConcurrentHashMap<>();
     private final Map<String, LocalDateTime> lastExecutionTimes = new ConcurrentHashMap<>();
+    private final MediaRepository mediaRepository;
     private CompletableFuture<Void> currentCrawlTask;
 
     // 하이브리드 크롤링을 위한 추가 필드
@@ -67,7 +74,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         crawlStartTime.set(LocalDateTime.now());
 
         // 비동기로 크롤링 작업 시작
-        currentCrawlTask = crawlAsync(request);
+        crwalBasic();
 
         return CrawlStatusDto.builder()
                 .status(CrawlerStatus.RUNNING)
@@ -149,22 +156,165 @@ public class CrawlerServiceImpl implements CrawlerService {
         return successRates;
     }
 
-    /**
-     * 비동기 크롤링 작업 실행 (하이브리드 방식)
-     */
-    @Async("crawlerExecutor")
-    protected CompletableFuture<Void> crawlAsync(CrawlRequestDto request) {
-        return CompletableFuture.runAsync(() -> {
-//            try {
-//                crawlJobHybrid(request.getCategory());
-//            } catch (Exception e) {
-//                log.error("크롤링 작업 중 오류 발생", e);
-//                handleCrawlingError(currentCategory.get(), e);
-//            } finally {
-//                resetCrawlingState();
-//            }
+
+    private void crwalBasic() {
+        NaverNewsSchemas.getCategoryUrls().keySet().forEach(category -> {
+            try {
+                log.info("카테고리 {} 크롤링 시작", category);
+                crawlCategory(category);
+                log.info("카테고리 {} 크롤링 완료", category);
+            } catch (Exception e) {
+                log.error("카테고리 {} 크롤링 중 에러 발생", category, e);
+                // 한 카테고리 실패해도 다른 카테고리는 계속 진행
+            }
         });
     }
+    private void crawlCategory(String category) throws JsonProcessingException {
+        String url = NaverNewsSchemas.getCategoryUrls().get(category);
+        Map<String, Object> schema1 = NaverNewsSchemas.getUrlListSchema();
+        Crawl4AIRequest getUrlRequest = Crawl4AIRequest.forUrlList(url, schema1);
+        Crawl4AIResult urlResult = crawl4AIClient.crawl(getUrlRequest, true);
+
+        String extractedArray = urlResult.getResult().getExtractedContent();
+        JsonNode arrayNode = objectMapper.readTree(extractedArray);
+        log.info("카테고리 {}: {}개 URL 수집 완료", category, arrayNode.size());
+        int savedCount = 0;
+        int skippedCount = 0;
+
+        for (int i = 0; i < arrayNode.size(); i++) {
+            try {
+                JsonNode item = arrayNode.get(i);
+                String link = getTextValue(item, "link");
+                String title = getTextValue(item, "title");
+
+                // 중복 체크 (이미 구현된 메서드 활용)
+                if (articleRepository.existsByLink(link)) {
+                    log.debug("이미 존재하는 기사 스킵: {}", link);
+                    skippedCount++;
+                    continue;
+                }
+
+                // 개별 기사 내용 크롤링
+                Article savedArticle = crawlAndSaveArticle(link, title, category);
+                if (savedArticle != null) {
+                    savedCount++;
+                    log.debug("기사 저장 완료: {} - {}", savedArticle.getId(), title);
+                }
+
+            } catch (Exception e) {
+                log.warn("개별 기사 처리 중 에러 발생 (인덱스: {})", i, e);
+                // 개별 기사 실패해도 계속 진행
+            }
+        }
+        log.info("카테고리 {} 처리 완료 - 저장: {}개, 스킵: {}개", category, savedCount, skippedCount);
+    }
+    private String getTextValue(JsonNode node, String fieldName) {
+        if (node.has(fieldName) && !node.get(fieldName).isNull()) {
+            String value = node.get(fieldName).asText();
+            return value.isEmpty() ? null : value;
+        }
+        return null;
+    }
+
+    @Transactional
+    protected Article crawlAndSaveArticle(String link, String title, String category) throws Exception {
+        Map<String, Object> schema2 = NaverNewsSchemas.getContentSchema();
+        Crawl4AIRequest request2 = Crawl4AIRequest.forArticleContent(link, schema2);
+        Crawl4AIResult result2 = crawl4AIClient.crawl(request2, false);
+
+        String extractedArticle = result2.getResult().getExtractedContent();
+        JsonNode articleNode = objectMapper.readTree(extractedArticle);
+
+        if (articleNode.size() == 0) {
+            log.warn("기사 내용을 추출할 수 없습니다: {}", link);
+            return null;
+        }
+
+        JsonNode articleItem = articleNode.get(0);
+        String content = getTextValue(articleItem, "content");  // schema에 맞게 수정
+        String images = getTextValue(articleItem, "image");
+        String imageAlts = getTextValue(articleItem, "image_alts");
+
+        // 내용이 없으면 저장하지 않음
+        if (content == null || content.trim().isEmpty()) {
+            log.warn("기사 내용이 비어있습니다: {}", link);
+            return null;
+        }
+
+        // Article 저장
+        Article article = saveArticle(title, content, link, category);
+
+        // 이미지가 있다면 Media로 저장
+        if (images != null && !images.trim().isEmpty()) {
+            saveMediaForArticle(article, images, imageAlts);
+        }
+
+        return article;
+    }
+
+    // saveArticle 메서드 수정
+    private Article saveArticle(String title, String content, String link, String category) {
+        String storedDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+
+
+        Article article = Article.builder()
+                .title(title)
+                .content(content)
+                .link(link)
+                .category(category)
+                .storedDate(storedDate)
+                .source("네이버뉴스")
+                .publishedAt(LocalDateTime.now())
+                .articleTextLength(content.length())
+                .viewsCount(0)
+                .version(1)
+                .isDeleted(false)
+                .build();
+
+        return articleRepository.save(article);
+    }
+
+    private void saveMediaForArticle(Article article, String imagesStr, String imageAlts) {
+        String storedDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+
+        // 이미지 URL과 alt 텍스트를 배열로 분리
+        String[] imageUrls = imagesStr.split(",");
+        String[] altTexts = imageAlts != null ? imageAlts.split(",") : new String[0];
+
+        for (int i = 0; i < imageUrls.length; i++) {
+            String trimmedUrl = imageUrls[i].trim();
+            if (!trimmedUrl.isEmpty()) {
+                // 해당 인덱스에 alt 텍스트가 있으면 사용, 없으면 null
+                String caption = i < altTexts.length ? altTexts[i].trim() : null;
+
+                Media media = Media.builder()
+                        .article(article)
+                        .storedDate(storedDate)
+                        .type("image")  // 기존 엔티티의 type 필드 사용
+                        .url(trimmedUrl)
+                        .caption(caption)  // 기존 엔티티의 caption 필드 사용
+                        .build();
+
+                mediaRepository.save(media);
+            }
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     /**
      * 하이브리드 방식 크롤링 작업
@@ -317,7 +467,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
         try {
             // Crawl4AI 요청 생성
-            Map<String, Object> schema = NaverNewsSchemas.getSchemaForCategory(category, true);
+            Map<String, Object> schema = null;
             Crawl4AIRequest request = Crawl4AIRequest.forUrlList(url, schema);
 
             // 실제 크롤링 실행
@@ -373,10 +523,8 @@ public class CrawlerServiceImpl implements CrawlerService {
         log.trace("기사 내용 크롤링: {}", articleUrl);
 
         try {
-            Map<String, Object> contentSchema = NaverNewsSchemas.getSchemaForCategory(category, false);
-            Crawl4AIRequest request = Crawl4AIRequest.forArticleContent(articleUrl, contentSchema);
 
-            Crawl4AIResult result = crawl4AIClient.crawl(request);
+            Crawl4AIResult result = null;
 
             if (result.isCrawlSuccessful() && result.hasExtractedContent()) {
                 List<Map<String, Object>> extractedContent = objectMapper.readValue(

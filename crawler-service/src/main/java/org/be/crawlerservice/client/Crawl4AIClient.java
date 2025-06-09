@@ -3,6 +3,8 @@ package org.be.crawlerservice.client;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.be.crawlerservice.config.CrawlerProperties;
@@ -41,8 +43,12 @@ public class Crawl4AIClient {
     /**
      * 동기적으로 크롤링 실행
      */
-    public Crawl4AIResult crawl(Crawl4AIRequest request) {
-        return crawl(request, DEFAULT_POLL_INTERVAL, DEFAULT_TIMEOUT);
+    public Crawl4AIResult crawl(Crawl4AIRequest request, boolean flag) {
+        //url 긁어오기
+        if(flag) return crawl(request, DEFAULT_POLL_INTERVAL, DEFAULT_TIMEOUT);
+
+        //뉴스 콘텐츠 내용
+        else  return crawl(request);
     }
 
     /**
@@ -81,8 +87,41 @@ public class Crawl4AIClient {
             throw new CrawlException("Crawl operation failed: " + e.getMessage(), e);
         }
         return null;
+    }
+
+    public Crawl4AIResult crawl(Crawl4AIRequest request){
+        try {
+            log.info("크롤링 시작: URLs={}", request.getUrls());
+
+            // JSON 직렬화 및 로깅
+            String requestJson = objectMapper.writeValueAsString(request);
+            log.debug("요청 JSON: {}", requestJson);
 
 
+            String crawlUrl = crawlerProperties.getCrawl4aiUrl() + "/crawl";
+            log.debug("크롤링 엔드포인트: {}", crawlUrl);
+            HttpHeaders headers = createHeaders();
+            HttpEntity<String> requestEntity = new HttpEntity<>(requestJson, headers);
+
+            ResponseEntity<String> response = restTemplate.postForEntity(crawlUrl, requestEntity, String.class);
+
+            log.debug("응답 상태: {}, 본문: {}", response.getStatusCode(),
+                    response.getBody() != null ? response.getBody().substring(0, Math.min(200, response.getBody().length())) : "null");
+
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JsonNode responseJson = objectMapper.readTree(response.getBody());
+                Crawl4AIResult result = parseStatusResponse(response.getBody());
+                return result;
+            }
+            // 2. 결과 폴링
+        } catch (JsonProcessingException e) {
+            log.error("JSON 직렬화 실패", e);
+            throw new CrawlException("JSON serialization failed: " + e.getMessage(), e);
+        } catch (Exception e) {
+            log.error("크롤링 작업 실패: URLs={}", request.getUrls(), e);
+            throw new CrawlException("Crawl operation failed: " + e.getMessage(), e);
+        }
+        return null;
     }
 
     /**
@@ -122,69 +161,15 @@ public class Crawl4AIClient {
 
         // 전체 응답 구조 로깅 (디버깅용)
         log.debug("=== Crawl4AI 응답 구조 분석 ===");
-        //log.debug("전체 응답: {}", responseJson.toPrettyString());
-        //String status = responseJson.get("status").asText();
-        //log.debug("상태: {}", status);
-
         Crawl4AIResult.Crawl4AIResultBuilder resultBuilder = Crawl4AIResult.builder();
-
 
         JsonNode resultNode = responseJson.get("results");
         log.info("=== 디버깅: 실제 데이터 확인 ===");
 
-        // HTML 길이 확인
-        if (resultNode.has("html")) {
-            String html = resultNode.get("html").asText();
-            log.info("HTML 길이: {}", html.length());
-        }
-
-        // cleaned_html 길이 확인
-        if (resultNode.has("cleaned_html")) {
-            String cleanedHtml = resultNode.get("cleaned_html").asText();
-            log.info("Cleaned HTML 길이: {}", cleanedHtml.length());
-        }
-
-        // markdown 구조 확인
-        if (resultNode.has("markdown")) {
-            JsonNode markdownNode = resultNode.get("markdown");
-            log.info("Markdown 타입: {}", markdownNode.getNodeType());
-            if (markdownNode.isObject()) {
-                log.info("raw_markdown 길이: {}",
-                        getTextValue(markdownNode, "raw_markdown").length());
-            }
-        }
-
-        // extracted_content 확인
-        if (resultNode.has("extracted_content")) {
-            JsonNode extracted = resultNode.get("extracted_content");
-            log.info("Extracted content - null: {}, 빈문자열: {}",
-                    extracted.isNull(),
-                    !extracted.isNull() && extracted.asText().isEmpty());
-        }
         JsonNode firstResult = resultNode.get(0);
 
-        log.info("=== 필드별 상세 분석 ===");
-        log.info("html 존재: {}, 값: {}", firstResult.has("html"),
-                firstResult.has("html") ? firstResult.get("html").getNodeType() : "없음");
-        log.info("cleaned_html 존재: {}, 값: {}", firstResult.has("cleaned_html"),
-                firstResult.has("cleaned_html") ? firstResult.get("cleaned_html").getNodeType() : "없음");
-        log.info("extracted_content 존재: {}, 값: {}", firstResult.has("extracted_content"),
-                firstResult.has("extracted_content") ? firstResult.get("extracted_content").getNodeType() : "없음");
-        System.out.println(firstResult.get("extracted_content"));
         Crawl4AIResult.CrawlResult crawlResult = parseCrawlResult(firstResult);
         resultBuilder.result(crawlResult).completedTime(LocalDateTime.now());
-
-        System.out.println("=== EXTRACTED CONTENT 상세 분석 ===");
-        JsonNode extractedNode = firstResult.get("extracted_content");
-        System.out.println("extracted_content 타입: " + extractedNode.getNodeType());
-        System.out.println("extracted_content isNull: " + extractedNode.isNull());
-        System.out.println("extracted_content 원본: " + extractedNode.toString());
-        System.out.println("extracted_content asText: '" + extractedNode.asText() + "'");
-
-//        // 🔍 links 객체도 확인
-//        JsonNode linksNode = firstResult.get("links");
-//        System.out.println("=== LINKS 객체 확인 ===");
-//        System.out.println(linksNode.toPrettyString());
 
 
         return resultBuilder.build();
@@ -220,16 +205,50 @@ public class Crawl4AIClient {
         // ✅ extracted_content 처리 (null vs 빈문자열 구분)
         if (resultNode.has("extracted_content")) {
             JsonNode extractedNode = resultNode.get("extracted_content");
+
+
             if (!extractedNode.isNull()) {
-                String extracted = extractedNode.asText();
-                builder.extractedContent(extracted.isEmpty() ? null : extracted);
+                try {
+                    // extracted_content를 배열 형태로 변환
+                    String extractedArray = convertToExtractedArray(extractedNode);
+                    builder.extractedContent(extractedArray);
+                } catch (Exception e) {
+                    // 변환 실패 시 원본 사용
+                    String extracted = extractedNode.asText();
+                    builder.extractedContent(extracted.isEmpty() ? null : extracted);
+                }
+            }
+        }
+        return builder.build();
+    }
+    private String convertToExtractedArray(JsonNode extractedNode) throws Exception {
+        ArrayNode resultArray = objectMapper.createArrayNode();
+
+        if (extractedNode.isTextual()) {
+            String text = extractedNode.asText();
+
+            // JSON 배열 문자열인지 확인
+            if (text.trim().startsWith("[")) {
+                JsonNode parsedArray = objectMapper.readTree(text);
+
+                if (parsedArray.isArray()) {
+                    for (JsonNode item : parsedArray) {
+                        ObjectNode newsItem = objectMapper.createObjectNode();
+                        newsItem.put("link", getTextValue(item, "link"));
+                        newsItem.put("title", getTextValue(item, "title"));
+                        newsItem.put("content", getTextValue(item, "content"));
+                        newsItem.put("image", getTextValue(item, "image"));
+                        newsItem.put("image_alts", getTextValue(item, "image_alts"));
+                        resultArray.add(newsItem);
+                    }
+                }
             }
         }
 
-
-
-        return builder.build();
+        return objectMapper.writeValueAsString(resultArray);
     }
+
+
     private String getTextValue(JsonNode node, String fieldName) {
         if (node.has(fieldName) && !node.get(fieldName).isNull()) {
             String value = node.get(fieldName).asText();

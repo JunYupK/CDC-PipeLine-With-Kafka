@@ -18,28 +18,6 @@ public class SchedulingConfig {
     private final CrawlerService crawlerService;
 
     /**
-     * 3시간마다 자동 크롤링 실행 (Python 코드와 동일)
-     */
-    @Scheduled(fixedRateString = "#{@crawlerProperties.intervalHours * 60 * 60 * 1000}")
-    public void scheduledCrawling() {
-        try {
-            log.info("스케줄된 크롤링 작업 시작");
-
-            // 전체 카테고리 크롤링 (category=null)
-            CrawlRequestDto request = CrawlRequestDto.builder()
-                    .category(null) // 전체 카테고리
-                    .maxPages(3)
-                    .priority(5)
-                    .build();
-
-            crawlerService.startCrawling(request);
-
-        } catch (Exception e) {
-            log.error("스케줄된 크롤링 작업 실패", e);
-        }
-    }
-
-    /**
      * 10초마다 시스템 메트릭 업데이트 (Python 코드와 동일)
      */
     @Scheduled(fixedRate = 10000) // 10초

@@ -18,22 +18,27 @@ public class NaverNewsSchemas {
      */
     public static Map<String, Object> getUrlListSchema() {
         return Map.of(
-                "name", "Naver News URL List",
-                "baseSelector", "#main_content > div.list_body.newsflash_body > ul.type06_headline > li, " +
-                        "#main_content > div.list_body.newsflash_body > ul.type06 > li",
-                "fields", List.of(
-                        Map.of(
-                                "name", "title",
-                                "selector", "dl > dt:not(.photo) > a",
-                                "type", "text"
-                        ),
-                        Map.of(
-                                "name", "link",
-                                "selector", "dl > dt:not(.photo) > a",
-                                "type", "attribute",
-                                "attribute", "href"
+                "schema", Map.of(
+                        "type", "dict",              // ✅ dict 래핑 추가
+                        "value", Map.of(             // ✅ value 래핑 추가
+                                "name", "Simple Links",
+                                "baseSelector", "li",  // 링크 요소만 선택
+                                "fields", List.of(
+                                        Map.of(
+                                                "name","title",
+                                                "selector", "div.sa_text > a > strong, a.sa_text_title > strong.sa_text_strong",
+                                                "type", "text"
+                                        ),
+                                        Map.of(
+                                                "name","link",
+                                                "selector", "div.sa_text > a, a.sa_text_title",
+                                                "type", "attribute",
+                                                "attribute", "href"
+                                        )
+                                )
                         )
                 )
+
         );
     }
 
@@ -48,82 +53,57 @@ public class NaverNewsSchemas {
                 "fields", List.of(
                         Map.of(
                                 "name", "content",
-                                "selector", "#dic_area, #articeBody, #newsEndContents, .article_body",
+                                "selector", "#dic_area",
                                 "type", "text"
                         ),
                         Map.of(
-                                "name", "images",
-                                "selector", "#dic_area img, #articeBody img, #newsEndContents img, .article_body img",
-                                "type", "attribute",
-                                "attribute", "src",
-                                "multiple", true
-                        )
-                )
-        );
-    }
-
-
-    /**
-     * 스포츠 뉴스 목록 스키마
-     * Python sports_crawler.py 참고
-     */
-    public static Map<String, Object> getSportsNewsSchema() {
-        return Map.of(
-                "name", "Naver Sports News",
-                "baseSelector", "ul > li.today_item, #_newsList > ul > li, .news_list ul.board_list > li",
-                "fields", List.of(
-                        Map.of(
-                                "name", "title",
-                                "selector", "a.title",
-                                "type", "text"
-                        ),
-                        Map.of(
-                                "name", "link",
-                                "selector", "a.title",
-                                "type", "attribute",
-                                "attribute", "href"
-                        ),
-                        Map.of(
-                                "name", "press",
-                                "selector", "span.press",
-                                "type", "text"
-                        ),
-                        Map.of(
-                                "name", "time",
-                                "selector", "span.time",
-                                "type", "text"
-                        )
-                )
-        );
-    }
-
-    /**
-     * 스포츠 기사 내용 스키마
-     */
-    public static Map<String, Object> getSportsContentSchema() {
-        return Map.of(
-                "name", "Sports Article Content",
-                "baseSelector", "body",
-                "fields", List.of(
-                        Map.of(
-                                "name", "content",
-                                "selector", "#newsEndContents",
-                                "type", "text"
-                        ),
-                        Map.of(
-                                "name", "article_images",
-                                "selector", "#newsEndContents img",
+                                "name", "image",
+                                "selector", "#dic_area img",  // dic_area 내의 모든 img 태그
                                 "type", "attribute",
                                 "attribute", "src"
                         ),
                         Map.of(
-                                "name", "published_date",
-                                "selector", ".news_headline .info span:first-child",
-                                "type", "text"
+                                "name", "image_alts", // 이미지 alt 텍스트도 필요하다면
+                                "selector", "#dic_area img",
+                                "type", "attribute",
+                                "attribute", "alt"
                         )
                 )
         );
     }
+
+
+    /**
+     * 단순 링크 추출 스키마
+     */
+    public static Map<String, Object> getSimpleLinkSchema() {
+        return Map.of(
+
+                "schema", Map.of(
+                        "type", "dict",              // ✅ dict 래핑 추가
+                        "value", Map.of(             // ✅ value 래핑 추가
+                                "name", "Simple Links",
+                                "baseSelector", "li",  // 링크 요소만 선택
+                                "fields", List.of(
+                                        Map.of(
+                                                "name","title",
+                                                "selector", "div.sa_text > a > strong, a.sa_text_title > strong.sa_text_strong",
+                                                "type", "text"
+                                        ),
+                                        Map.of(
+                                                "name","link",
+                                                "selector", "div.sa_text > a, a.sa_text_title",
+                                                "type", "attribute",
+                                                "attribute", "href"
+                                        )
+                                )
+                        )
+                )
+
+        );
+    }
+
+
 
     /**
      * 카테고리별 URL 매핑
@@ -155,19 +135,6 @@ public class NaverNewsSchemas {
                 "골프", "https://sports.news.naver.com/golf/news/index",
                 "일반", "https://sports.news.naver.com/general/news/index"
         );
-    }
-
-    /**
-     * 동적으로 스키마 선택하는 헬퍼 메서드
-     */
-    public static Map<String, Object> getSchemaForCategory(String category, boolean isListPage) {
-        if (getSportsCategoryUrls().containsKey(category)) {
-            // 스포츠 카테고리
-            return isListPage ? getSportsNewsSchema() : getSportsContentSchema();
-        } else {
-            // 일반 뉴스 카테고리
-            return isListPage ? getImprovedUrlListSchema() : getContentSchema();
-        }
     }
 
     /**
@@ -211,58 +178,8 @@ public class NaverNewsSchemas {
 
     }
 
-    /**
-     * 광범위 네이버 뉴스 스키마 (fallback)
-     */
-    public static Map<String, Object> getBroadNaverNewsSchema() {
-        return Map.of(
-                "name", "Naver News Broad",
-                "baseSelector", "div", // 넓은 범위
-                "fields", List.of(
-                        Map.of(
-                                "name", "text_content",
-                                "selector", "a[href*='news.naver.com']",
-                                "type", "text"
-                        ),
-                        Map.of(
-                                "name", "news_link",
-                                "selector", "a[href*='news.naver.com']",
-                                "type", "attribute",
-                                "attribute", "href"
-                        )
-                )
-        );
-    }
 
-    /**
-     * 단순 링크 추출 스키마
-     */
-    public static Map<String, Object> getSimpleLinkSchema() {
-        return Map.of(
 
-                        "schema", Map.of(
-                                "type", "dict",              // ✅ dict 래핑 추가
-                                "value", Map.of(             // ✅ value 래핑 추가
-                                        "name", "Simple Links",
-                                        "baseSelector", "li",  // 링크 요소만 선택
-                                        "fields", List.of(
-                                                Map.of(
-                                                        "name","title",
-                                                        "selector", "div.sa_text > a > strong, a.sa_text_title > strong.sa_text_strong",
-                                                        "type", "text"
-                                                ),
-                                                Map.of(
-                                                        "name","link",
-                                                        "selector", "div.sa_text > a, a.sa_text_title",
-                                                        "type", "attribute",
-                                                        "attribute", "href"
-                                                )
-                                        )
-                                )
-                        )
-
-        );
-    }
 
 
 }
