@@ -51,7 +51,7 @@ public class CrawlerController {
         log.info("BFS Deep Crawling triggered for category: {}", request.getCategory());
 
         try {
-            CrawlStatusDto status = crawlerService.startDeepCrawling(request);
+            CrawlStatusDto status = crawlerService.startDeepCrawling();
             return ResponseEntity.ok(status);
         } catch (RuntimeException e) {
             log.warn("Failed to start BFS Deep Crawling: {}", e.getMessage());
@@ -84,34 +84,6 @@ public class CrawlerController {
             log.error("Failed to start crawling for category: {}", category, e);
             return ResponseEntity.internalServerError()
                     .body(CrawlStatusDto.failed("Failed to start crawling: " + e.getMessage()));
-        }
-    }
-    /**
-     * 특정 카테고리 BFS Deep Crawling 트리거 (간단한 방식)
-     * POST /api/v1/crawl/deep/{category}
-     */
-    @PostMapping("/deep/{category}")
-    public ResponseEntity<CrawlStatusDto> triggerDeepCrawlByCategory(
-            @PathVariable String category) {
-
-        log.info("BFS Deep Crawling triggered for category: {}", category);
-
-        CrawlRequestDto request = CrawlRequestDto.builder()
-                .category(category)
-                .maxPages(30)  // Deep Crawling은 더 많은 페이지 처리
-                .build();
-
-        try {
-            CrawlStatusDto status = crawlerService.startDeepCrawling(request);
-            return ResponseEntity.ok(status);
-        } catch (RuntimeException e) {
-            log.warn("Failed to start BFS Deep Crawling for category {}: {}", category, e.getMessage());
-            return ResponseEntity.badRequest()
-                    .body(CrawlStatusDto.failed(e.getMessage()));
-        } catch (Exception e) {
-            log.error("Failed to start BFS Deep Crawling for category: {}", category, e);
-            return ResponseEntity.internalServerError()
-                    .body(CrawlStatusDto.failed("Failed to start BFS Deep Crawling: " + e.getMessage()));
         }
     }
 

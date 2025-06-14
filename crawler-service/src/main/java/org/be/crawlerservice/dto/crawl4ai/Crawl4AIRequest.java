@@ -153,7 +153,7 @@ public class Crawl4AIRequest {
                         "cache_mode", "bypass",
                         "wait_until", "domcontentloaded",
                         "page_timeout", 45000,
-                        "stream", false,
+                        "stream", true,
                         "deep_crawl_strategy", Map.of(
                                 "type", "BFSDeepCrawlStrategy",
                                 "params", Map.of(
@@ -180,7 +180,33 @@ public class Crawl4AIRequest {
     /**
      * BFS Deep Crawling 요청 생성 (뉴스 사이트 최적화)
      */
-    public static Crawl4AIRequest forBFSDeepCrawl(String startUrl, int maxDepth, int maxPages) {
+    public static Crawl4AIRequest forBFSDeepCrawl(String startUrl, int maxDepth, int maxPages, Map<String, Object> schema) {
+//        Map<String, Object> schema = Map.of(
+//                "name", "NewsArticle",
+//                "baseSelector", "body",
+//                "fields", List.of(
+//                        Map.of(
+//                                "name", "title",
+//                                "selector", "#title_area > span",
+//                                "type", "text"
+//                        ),
+//                        Map.of(
+//                                "name", "content",
+//                                "selector", "#dic_area, .news_content, #newsct_article",
+//                                "type", "text"
+//                        ),
+//                        Map.of(
+//                                "name", "author",
+//                                "selector", ".byline, .author, .media_end_head_journalist",
+//                                "type", "text"
+//                        ),
+//                        Map.of(
+//                                "name", "published_date",
+//                                "selector", ".date, .published, .media_end_head_info_datestamp",
+//                                "type", "text"
+//                        )
+//                )
+//        );
         // 브라우저 설정
         ConfigWrapper browserConfig = ConfigWrapper.builder()
                 .type("BrowserConfig")
@@ -188,7 +214,7 @@ public class Crawl4AIRequest {
                         "headless", true,
                         "viewport_width", 1920,
                         "viewport_height", 1080,
-                        "text_mode", false  // 이미지도 수집
+                        "text_mode", false
                 ))
                 .build();
 
@@ -198,20 +224,34 @@ public class Crawl4AIRequest {
                 .params(Map.of(
                         "cache_mode", "bypass",
                         "wait_until", "networkidle",
-                        "page_timeout", 60000,
-                        "stream", false,  // 스트리밍 모드 활성화
+                        "page_timeout", 30000,
+                        "delay_before_return_html", 2.0,
+                        "extraction_strategy", Map.of(
+                                "type", "JsonCssExtractionStrategy",
+                                "params", Map.of("schema", schema)
+                        ),
                         "deep_crawl_strategy", Map.of(
                                 "type", "BFSDeepCrawlStrategy",
                                 "params", Map.of(
                                         "max_depth", maxDepth,
+                                        "include_external", true,
                                         "max_pages", maxPages,
-                                        "include_external", false,
-                                        "score_threshold", 0.3
+                                        "score_threshold", 0.0,
+                                        "filter_chain", Map.of(
+                                                "type", "FilterChain",
+                                                "params", Map.of(
+                                                        "filters", List.of(
+                                                                Map.of(
+                                                                        "type", "URLPatternFilter",
+                                                                        "params", Map.of(
+                                                                                "patterns", List.of("*article*")
+                                                                        )
+                                                                )
+                                                        )
+                                                )
+                                        )
                                 )
-                        ),
-                        // 뉴스 사이트 최적화 설정
-                        "excluded_tags", List.of("script", "style", "nav", "footer", "aside"),
-                        "word_count_threshold", 100
+                        )
                 ))
                 .build();
 

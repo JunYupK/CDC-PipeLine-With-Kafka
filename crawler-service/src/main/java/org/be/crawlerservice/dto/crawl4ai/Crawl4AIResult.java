@@ -18,7 +18,10 @@ import java.util.Map;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Crawl4AIResult {
-
+    /**
+     * 작업 ID
+     */
+    private String url;
     /**
      * 작업 ID
      */
@@ -61,6 +64,7 @@ public class Crawl4AIResult {
          */
         private String html;
 
+        private String url;
         /**
          * 정제된 HTML
          */

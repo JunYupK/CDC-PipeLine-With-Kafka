@@ -16,7 +16,7 @@ public interface CrawlerService {
     /**
      * BFS Deep Crawling 시작
      */
-    CrawlStatusDto startDeepCrawling(CrawlRequestDto request);
+    CrawlStatusDto startDeepCrawling();
 
     /**
      * 크롤링 중지

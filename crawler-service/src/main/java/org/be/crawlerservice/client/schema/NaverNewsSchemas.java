@@ -73,33 +73,61 @@ public class NaverNewsSchemas {
     }
 
 
-    /**
-     * 단순 링크 추출 스키마
-     */
-    public static Map<String, Object> getSimpleLinkSchema() {
-        return Map.of(
-
-                "schema", Map.of(
-                        "type", "dict",              // ✅ dict 래핑 추가
-                        "value", Map.of(             // ✅ value 래핑 추가
-                                "name", "Simple Links",
-                                "baseSelector", "li",  // 링크 요소만 선택
-                                "fields", List.of(
-                                        Map.of(
-                                                "name","title",
-                                                "selector", "div.sa_text > a > strong, a.sa_text_title > strong.sa_text_strong",
-                                                "type", "text"
-                                        ),
-                                        Map.of(
-                                                "name","link",
-                                                "selector", "div.sa_text > a, a.sa_text_title",
-                                                "type", "attribute",
-                                                "attribute", "href"
-                                        )
-                                )
+    public static Map<String,Object> getBasicNewsSchema() {
+        return  Map.of(
+                "name", "NewsArticle",
+                "baseSelector", "body",
+                "fields", List.of(
+                        Map.of(
+                                "name", "title",
+                                "selector", "#title_area > span",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "content",
+                                "selector", "#dic_area, .news_content, #newsct_article",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "author",
+                                "selector", ".byline, .author, .media_end_head_journalist",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "published_date",
+                                "selector", ".date, .published, .media_end_head_info_datestamp",
+                                "type", "text"
                         )
                 )
+        );
+    }
 
+    public static Map<String,Object> getSportsNewsSchema() {
+        return  Map.of(
+                "name", "NewsArticle",
+                "baseSelector", "body",
+                "fields", List.of(
+                        Map.of(
+                                "name", "title",
+                                "selector", "#title_area > span, #content > div > div > div.article_area > div > div.ArticleHead_comp_article_head__zp1Id > div.ArticleHead_article_head_title__YUNFf > h2",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "content",
+                                "selector", "#dic_area, .news_content, #newsct_article, #content > div > div > div.article_area > div > div.ArticleContent_comp_article_content__luOFM",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "author",
+                                "selector", ".byline, .author, .media_end_head_journalist, #content > div > div > div.article_area > div > div.ArticleHead_comp_article_head__zp1Id > div.article_head_info > div.ArticleHead_journalist_wrap__nE8S_ > div > div > a > em",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "published_date",
+                                "selector", ".date, .published, .media_end_head_info_datestamp",
+                                "type", "text"
+                        )
+                )
         );
     }
 
@@ -116,13 +144,7 @@ public class NaverNewsSchemas {
                 Map.entry("사회", "https://news.naver.com/section/102"),
                 Map.entry("생활문화", "https://news.naver.com/section/103"),
                 Map.entry("세계", "https://news.naver.com/section/104"),
-                Map.entry("IT과학", "https://news.naver.com/section/105"),
-                Map.entry("야구", "https://sports.news.naver.com/kbaseball/news/index"),
-                Map.entry("해외야구", "https://sports.news.naver.com/wbaseball/news/index"),
-                Map.entry("농구", "https://sports.news.naver.com/basketball/news/index"),
-                Map.entry("배구", "https://sports.news.naver.com/volleyball/news/index"),
-                Map.entry("골프", "https://sports.news.naver.com/golf/news/index"),
-                Map.entry("일반", "https://sports.news.naver.com/general/news/index")
+                Map.entry("IT과학", "https://news.naver.com/section/105")
 
         );
     }
