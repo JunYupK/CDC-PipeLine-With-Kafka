@@ -131,63 +131,96 @@ public class Crawl4AIRequest {
     }
 
     /**
-     * 기본 크롤링 요청 생성 (추출 전략 없음)
+     * 네이버 뉴스 전용 BFS Deep Crawling
      */
-    public static Crawl4AIRequest forBasicCrawl(String url) {
+    public static Crawl4AIRequest forNaverNewsBFS(String categoryUrl) {
+        // 네이버 뉴스에 특화된 설정
+        ConfigWrapper browserConfig = ConfigWrapper.builder()
+                .type("BrowserConfig")
+                .params(Map.of(
+                        "headless", true,
+                        "viewport_width", 1920,
+                        "viewport_height", 1080,
+                        "headers", Map.of(
+                                "Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8"
+                        )
+                ))
+                .build();
+
+        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
+                .type("CrawlerRunConfig")
+                .params(Map.of(
+                        "cache_mode", "bypass",
+                        "wait_until", "domcontentloaded",
+                        "page_timeout", 45000,
+                        "stream", false,
+                        "deep_crawl_strategy", Map.of(
+                                "type", "BFSDeepCrawlStrategy",
+                                "params", Map.of(
+                                        "max_depth", 2,        // 목록 페이지 -> 기사 페이지
+                                        "max_pages", 30,       // 적당한 개수로 제한
+                                        "include_external", false,
+                                        "score_threshold", 0.2
+                                )
+                        ),
+                        // 네이버 뉴스 구조에 맞는 추출 설정
+                        "css_selector", "body",
+                        "excluded_tags", List.of("script", "style", "nav", "header", "footer"),
+                        "word_count_threshold", 50
+                ))
+                .build();
+
+        return Crawl4AIRequest.builder()
+                .urls(List.of(categoryUrl))
+                .browserConfig(browserConfig)
+                .crawlerConfig(crawlerConfig)
+                .priority(9)
+                .build();
+    }
+    /**
+     * BFS Deep Crawling 요청 생성 (뉴스 사이트 최적화)
+     */
+    public static Crawl4AIRequest forBFSDeepCrawl(String startUrl, int maxDepth, int maxPages) {
         // 브라우저 설정
         ConfigWrapper browserConfig = ConfigWrapper.builder()
                 .type("BrowserConfig")
                 .params(Map.of(
                         "headless", true,
                         "viewport_width", 1920,
-                        "viewport_height", 1080
+                        "viewport_height", 1080,
+                        "text_mode", false  // 이미지도 수집
                 ))
                 .build();
 
-        // 크롤러 설정 (추출 전략 없음)
+        // BFS Deep Crawling 전략이 포함된 크롤러 설정
         ConfigWrapper crawlerConfig = ConfigWrapper.builder()
                 .type("CrawlerRunConfig")
                 .params(Map.of(
                         "cache_mode", "bypass",
-                        "wait_until", "domcontentloaded",
-                        "page_timeout", 60000
+                        "wait_until", "networkidle",
+                        "page_timeout", 60000,
+                        "stream", false,  // 스트리밍 모드 활성화
+                        "deep_crawl_strategy", Map.of(
+                                "type", "BFSDeepCrawlStrategy",
+                                "params", Map.of(
+                                        "max_depth", maxDepth,
+                                        "max_pages", maxPages,
+                                        "include_external", false,
+                                        "score_threshold", 0.3
+                                )
+                        ),
+                        // 뉴스 사이트 최적화 설정
+                        "excluded_tags", List.of("script", "style", "nav", "footer", "aside"),
+                        "word_count_threshold", 100
                 ))
                 .build();
 
         return Crawl4AIRequest.builder()
-                .urls(List.of(url))
+                .urls(List.of(startUrl))
                 .browserConfig(browserConfig)
                 .crawlerConfig(crawlerConfig)
-                .priority(5)
+                .priority(8)
                 .build();
     }
 
-    /**
-     * 단순 텍스트 크롤링 (마크다운만)
-     */
-    public static Crawl4AIRequest forTextOnly(String url) {
-        ConfigWrapper browserConfig = ConfigWrapper.builder()
-                .type("BrowserConfig")
-                .params(Map.of(
-                        "headless", true,
-                        "text_mode", true  // 이미지 비활성화
-                ))
-                .build();
-
-        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
-                .type("CrawlerRunConfig")
-                .params(Map.of(
-                        "cache_mode", "bypass",
-                        "word_count_threshold", 50,
-                        "excluded_tags", List.of("script", "style", "nav", "footer")
-                ))
-                .build();
-
-        return Crawl4AIRequest.builder()
-                .urls(List.of(url))
-                .browserConfig(browserConfig)
-                .crawlerConfig(crawlerConfig)
-                .priority(5)
-                .build();
-    }
 }

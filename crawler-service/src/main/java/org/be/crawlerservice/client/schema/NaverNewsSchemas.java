@@ -110,13 +110,20 @@ public class NaverNewsSchemas {
      * Python crawler_service.py의 URLS와 동일
      */
     public static Map<String, String> getCategoryUrls() {
-        return Map.of(
-                "정치", "https://news.naver.com/section/100",
-                "경제", "https://news.naver.com/section/101",
-                "사회", "https://news.naver.com/section/102",
-                "생활문화", "https://news.naver.com/section/103",
-                "세계", "https://news.naver.com/section/104",
-                "IT과학", "https://news.naver.com/section/105"
+        return Map.ofEntries(
+                Map.entry("정치", "https://news.naver.com/section/100"),
+                Map.entry("경제", "https://news.naver.com/section/101"),
+                Map.entry("사회", "https://news.naver.com/section/102"),
+                Map.entry("생활문화", "https://news.naver.com/section/103"),
+                Map.entry("세계", "https://news.naver.com/section/104"),
+                Map.entry("IT과학", "https://news.naver.com/section/105"),
+                Map.entry("야구", "https://sports.news.naver.com/kbaseball/news/index"),
+                Map.entry("해외야구", "https://sports.news.naver.com/wbaseball/news/index"),
+                Map.entry("농구", "https://sports.news.naver.com/basketball/news/index"),
+                Map.entry("배구", "https://sports.news.naver.com/volleyball/news/index"),
+                Map.entry("골프", "https://sports.news.naver.com/golf/news/index"),
+                Map.entry("일반", "https://sports.news.naver.com/general/news/index")
+
         );
     }
 

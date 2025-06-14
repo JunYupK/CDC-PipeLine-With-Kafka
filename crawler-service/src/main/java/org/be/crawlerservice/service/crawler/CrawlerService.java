@@ -9,9 +9,14 @@ import java.util.Map;
 public interface CrawlerService {
 
     /**
-     * 크롤링 시작
+     * 기본 크롤링 시작
      */
     CrawlStatusDto startCrawling(CrawlRequestDto request);
+
+    /**
+     * BFS Deep Crawling 시작
+     */
+    CrawlStatusDto startDeepCrawling(CrawlRequestDto request);
 
     /**
      * 크롤링 중지

@@ -12,7 +12,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/source_db
     username: kjy
-    password: home
+    password: homesweethome
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20
