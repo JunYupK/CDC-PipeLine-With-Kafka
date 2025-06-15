@@ -60,6 +60,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     private CompletableFuture<Void> currentCrawlTask;
     private final AtomicInteger processedCount = new AtomicInteger(0);
     private final AtomicInteger totalCount = new AtomicInteger(0);
+    private final AtomicInteger skippedCount = new AtomicInteger(0);
 
     // Deep Crawling 전용 상태 관리
     private final AtomicInteger deepCrawlProcessedCount = new AtomicInteger(0);
@@ -272,6 +273,12 @@ public class CrawlerServiceImpl implements CrawlerService {
                         String author = getTextValue(articleNode, "author");
                         String publishedDateRaw  = getTextValue(articleNode, "published_date");
                         if(title == null || content == null || author == null ) break;
+                        // 중복 체크
+                        if (articleRepository.existsByLink(link)) {
+                            log.debug("이미 존재하는 기사 스킵: {}", link);
+                            skippedCount.incrementAndGet();
+                            continue;
+                        }
                         //기자 이름 추출
                         author = author.split(" ")[0];
                         // Article 저장
@@ -313,6 +320,12 @@ public class CrawlerServiceImpl implements CrawlerService {
                         String author = getTextValue(articleNode, "author");
                         String publishedDateRaw  = getTextValue(articleNode, "published_date");
                         if(title == null || content == null || author == null ) break;
+                        // 중복 체크
+                        if (articleRepository.existsByLink(link)) {
+                            log.debug("이미 존재하는 기사 스킵: {}", link);
+                            skippedCount.incrementAndGet();
+                            continue;
+                        }
                         //기자 이름 추출
                         author = author.split(" ")[0];
 
@@ -339,7 +352,6 @@ public class CrawlerServiceImpl implements CrawlerService {
         JsonNode arrayNode = objectMapper.readTree(extractedArray);
         log.info("카테고리 {}: {}개 URL 수집 완료", category, arrayNode.size());
         int savedCount = 0;
-        int skippedCount = 0;
 
         for (int i = 0; i < arrayNode.size(); i++) {
             try {
@@ -350,7 +362,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                 // 중복 체크 (이미 구현된 메서드 활용)
                 if (articleRepository.existsByLink(link)) {
                     log.debug("이미 존재하는 기사 스킵: {}", link);
-                    skippedCount++;
+                    skippedCount.incrementAndGet();
                     continue;
                 }
 
