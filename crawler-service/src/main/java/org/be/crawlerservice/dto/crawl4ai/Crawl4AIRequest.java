@@ -181,32 +181,6 @@ public class Crawl4AIRequest {
      * BFS Deep Crawling 요청 생성 (뉴스 사이트 최적화)
      */
     public static Crawl4AIRequest forBFSDeepCrawl(String startUrl, int maxDepth, int maxPages, Map<String, Object> schema) {
-//        Map<String, Object> schema = Map.of(
-//                "name", "NewsArticle",
-//                "baseSelector", "body",
-//                "fields", List.of(
-//                        Map.of(
-//                                "name", "title",
-//                                "selector", "#title_area > span",
-//                                "type", "text"
-//                        ),
-//                        Map.of(
-//                                "name", "content",
-//                                "selector", "#dic_area, .news_content, #newsct_article",
-//                                "type", "text"
-//                        ),
-//                        Map.of(
-//                                "name", "author",
-//                                "selector", ".byline, .author, .media_end_head_journalist",
-//                                "type", "text"
-//                        ),
-//                        Map.of(
-//                                "name", "published_date",
-//                                "selector", ".date, .published, .media_end_head_info_datestamp",
-//                                "type", "text"
-//                        )
-//                )
-//        );
         // 브라우저 설정
         ConfigWrapper browserConfig = ConfigWrapper.builder()
                 .type("BrowserConfig")
@@ -223,7 +197,6 @@ public class Crawl4AIRequest {
                 .type("CrawlerRunConfig")
                 .params(Map.of(
                         "cache_mode", "bypass",
-                        "stream", true, // 🔥 스트림 모드
                         "wait_until", "networkidle",
                         "page_timeout", 30000,
                         "delay_before_return_html", 2.0,
@@ -263,5 +236,145 @@ public class Crawl4AIRequest {
                 .priority(8)
                 .build();
     }
+    /**
+     * BestFirstCrawlingStrategy를 사용한 네이버 뉴스 전용 크롤링
+     * 더 똑똑한 필터링과 스코어링으로 고품질 기사 우선 수집
+     */
+    public static Crawl4AIRequest forBestFirstNaverNews(String startUrl, int maxDepth, int maxPages, Map<String, Object> schema) {
+
+        // 브라우저 설정
+        ConfigWrapper browserConfig = ConfigWrapper.builder()
+                .type("BrowserConfig")
+                .params(Map.of(
+                        "headless", true,
+                        "viewport_width", 1920,
+                        "viewport_height", 1080,
+                        "text_mode", false,
+                        "headers", Map.of(
+                                "Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8",
+                                "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        )
+                ))
+                .build();
+
+        // BestFirst Deep Crawling 전략 설정
+        ConfigWrapper crawlerConfig = ConfigWrapper.builder()
+                .type("CrawlerRunConfig")
+                .params(Map.of(
+                        "cache_mode", "bypass",
+                        "wait_until", "networkidle",
+                        "page_timeout", 45000,  // 네이버 뉴스는 좀 더 긴 타임아웃
+                        "delay_before_return_html", 2.0,
+                        "extraction_strategy", Map.of(
+                                "type", "JsonCssExtractionStrategy",
+                                "params", Map.of("schema", schema)
+                        ),
+                        "deep_crawl_strategy", Map.of(
+                                "type", "BestFirstCrawlingStrategy",
+                                "params", Map.of(
+                                        "max_depth", maxDepth,
+                                        "max_pages", maxPages,
+                                        "include_external", false,  // 네이버 도메인 내에서만
+
+                                        // 🎯 네이버 뉴스 특화 KeywordRelevanceScorer
+                                        "url_scorer", Map.of(
+                                                "type", "KeywordRelevanceScorer",
+                                                "params", Map.of(
+                                                        "keywords", List.of(
+                                                                // 네이버 뉴스 관련 키워드
+                                                                "뉴스", "기사", "article", "mnews",
+                                                                // 카테고리별 키워드
+                                                                "정치", "경제", "사회", "문화", "세계", "IT", "과학", "스포츠",
+                                                                // 스포츠 세부 키워드
+                                                                "야구", "축구", "농구", "배구", "골프", "kbaseball", "kfootball"
+                                                        ),
+                                                        "weight", 0.8  // 높은 가중치로 관련성 강조
+                                                )
+                                        ),
+
+                                        // 🔍 정교한 FilterChain 설정
+                                        "filter_chain", Map.of(
+                                                "type", "FilterChain",
+                                                "params", Map.of(
+                                                        "filters", List.of(
+                                                                // 1. 도메인 필터 - 네이버 뉴스 도메인만 허용
+                                                                Map.of(
+                                                                        "type", "DomainFilter",
+                                                                        "params", Map.of(
+                                                                                "allowed_domains", List.of(
+                                                                                        "news.naver.com",
+                                                                                        "n.news.naver.com",
+                                                                                        "m.news.naver.com",
+                                                                                        "sports.naver.com",
+                                                                                        "m.sports.naver.com"
+                                                                                ),
+                                                                                "blocked_domains", List.of(
+                                                                                        "ad.naver.com",
+                                                                                        "shopping.naver.com"
+                                                                                )
+                                                                        )
+                                                                ),
+
+                                                                // 2. URL 패턴 필터 - 실제 기사 URL만 허용
+                                                                Map.of(
+                                                                        "type", "URLPatternFilter",
+                                                                        "params", Map.of(
+                                                                                "patterns", List.of(
+                                                                                        // 일반 뉴스 패턴
+                                                                                        "*/mnews/article/*/*",
+                                                                                        "*news.naver.com/mnews/article*",
+
+                                                                                        // 스포츠 뉴스 패턴
+                                                                                        "*sports.naver.com/*/article/*/*",
+                                                                                        "*sports.naver.com/kbaseball/article*",
+                                                                                        "*sports.naver.com/kfootball/article*",
+                                                                                        "*sports.naver.com/wbaseball/article*",
+                                                                                        "*sports.naver.com/basketball/article*",
+                                                                                        "*sports.naver.com/volleyball/article*",
+                                                                                        "*sports.naver.com/golf/article*",
+                                                                                        "*sports.naver.com/esports/article*",
+                                                                                        "*sports.naver.com/general/article*",
+
+                                                                                        // 섹션 페이지도 포함 (링크 발견용)
+                                                                                        "*/section/*",
+                                                                                        "*news.naver.com/section*"
+                                                                                )
+                                                                        )
+                                                                ),
+
+                                                                // 3. 콘텐츠 타입 필터
+                                                                Map.of(
+                                                                        "type", "ContentTypeFilter",
+                                                                        "params", Map.of(
+                                                                                "allowed_types", List.of("text/html")
+                                                                        )
+                                                                ),
+
+                                                                // 4. SEO 필터 - 고품질 기사 우선
+                                                                Map.of(
+                                                                        "type", "SEOFilter",
+                                                                        "params", Map.of(
+                                                                                "threshold", 0.3,  // 낮은 임계값으로 설정
+                                                                                "keywords", List.of(
+                                                                                        "뉴스", "기사", "보도", "취재", "독점"
+                                                                                )
+                                                                        )
+                                                                )
+                                                        )
+                                                )
+                                        )
+                                )
+                        )
+                ))
+                .build();
+
+        return Crawl4AIRequest.builder()
+                .urls(List.of(startUrl))
+                .browserConfig(browserConfig)
+                .crawlerConfig(crawlerConfig)
+                .priority(9)  // 높은 우선순위
+                .build();
+    }
+
 
 }

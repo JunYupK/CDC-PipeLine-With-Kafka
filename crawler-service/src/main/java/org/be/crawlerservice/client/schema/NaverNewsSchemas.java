@@ -162,7 +162,8 @@ public class NaverNewsSchemas {
                 "농구", "https://sports.news.naver.com/basketball/news/index",
                 "배구", "https://sports.news.naver.com/volleyball/news/index",
                 "골프", "https://sports.news.naver.com/golf/news/index",
-                "일반", "https://sports.news.naver.com/general/news/index"
+                "일반", "https://sports.news.naver.com/general/news/index",
+                "e스포츠","https://game.naver.com/esports/League_of_Legends/news/lol"
         );
     }
 

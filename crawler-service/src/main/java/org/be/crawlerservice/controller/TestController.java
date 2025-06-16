@@ -71,74 +71,78 @@ public class TestController {
             log.info("🚀 Stream BFS Deep Crawling 시작: {}", startUrl);
 
             // Stream 요청 생성
-            Map<String, Object> schema = NaverNewsSchemas.getUrlListSchema();
+            Map<String, Object> schema = NaverNewsSchemas.getBasicNewsSchema();
 
-            Crawl4AIRequest streamRequest = Crawl4AIRequest.forUrlList(startUrl,schema);
 
-            String requestJson = objectMapper.writeValueAsString(streamRequest);
-            String crawlUrl = crawlerProperties.getCrawl4aiUrl() + "/crawl/stream";
+            Crawl4AIRequest request = Crawl4AIRequest.forBestFirstNaverNews(startUrl, 1, 10, schema);
+            String crawlUrl = crawlerProperties.getCrawl4aiUrl() + "/crawl";
+            HttpHeaders headers = createHeaders();
+            String requestJson = objectMapper.writeValueAsString(request);
+            HttpEntity<String> requestEntity = new HttpEntity<>(requestJson, headers);
 
-            // WebClient로 스트림 연결
-            WebClient webClient = WebClient.builder()
-                    .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
-                    .build();
+            ResponseEntity<String> response = restTemplate.postForEntity(crawlUrl, requestEntity, String.class);
 
-            log.info("📡 스트림 연결 시작...");
-
-            Flux<String> streamFlux = webClient.post()
-                    .uri(crawlUrl)
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + crawlerProperties.getApiToken())
-                    .bodyValue(requestJson)
-                    .retrieve()
-                    .bodyToFlux(String.class);
-
-            // 실시간 스트림 처리
-            streamFlux
-                    .timeout(Duration.ofSeconds(120))
-                    .doOnSubscribe(subscription -> log.info("🔗 스트림 구독 시작"))
-                    .doOnNext(chunk -> {
-                        int count = processedCount.incrementAndGet();
-
-                        // 🔥 실제 청크 내용 로깅 추가
-                        log.info("📦 청크 {}: 크기={}bytes", count, chunk.length());
-                        log.info("📄 청크 내용: {}", chunk);
-
-                        try {
-                            // JSON 파싱 시도
-                            if (chunk.trim().startsWith("{") || chunk.trim().startsWith("[")) {
-                                JsonNode chunkNode = objectMapper.readTree(chunk);
-
-                                // 🔥 JSON 구조 로깅 추가
-                                log.info("🔍 JSON 구조: {}", chunkNode.toPrettyString());
-
-                                // 배열이면 각 요소 처리
-                                if (chunkNode.isArray()) {
-                                    for (JsonNode item : chunkNode) {
-                                        processArticleNode(item, validArticleCount);
-                                    }
-                                } else {
-                                    processArticleNode(chunkNode, validArticleCount);
-                                }
-                            } else {
-                                log.warn("⚠️ JSON이 아닌 청크: {}", chunk.substring(0, Math.min(chunk.length(), 200)));
-                            }
-
-                        } catch (Exception e) {
-                            log.warn("⚠️ 청크 파싱 실패: {} - 청크: {}", e.getMessage(),
-                                    chunk.substring(0, Math.min(chunk.length(), 200)));
-                        }
-                    })
-                    .doOnComplete(() -> {
-                        log.info("✅ 스트림 완료 - 총 청크: {}, 유효 기사: {}",
-                                processedCount.get(), validArticleCount.get());
-                    })
-                    .doOnError(error -> log.error("❌ 스트림 오류", error))
-                    .blockLast();
-
-            results.put("stream_completed", true);
-            results.put("total_chunks", processedCount.get());
-            results.put("valid_articles", validArticleCount.get());
+//            // WebClient로 스트림 연결
+//            WebClient webClient = WebClient.builder()
+//                    .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+//                    .build();
+//
+//            log.info("📡 스트림 연결 시작...");
+//
+//            Flux<String> streamFlux = webClient.post()
+//                    .uri(crawlUrl)
+//                    .header("Content-Type", "application/json")
+//                    .header("Authorization", "Bearer " + crawlerProperties.getApiToken())
+//                    .bodyValue(requestJson)
+//                    .retrieve()
+//                    .bodyToFlux(String.class);
+//
+//            // 실시간 스트림 처리
+//            streamFlux
+//                    .timeout(Duration.ofSeconds(120))
+//                    .doOnSubscribe(subscription -> log.info("🔗 스트림 구독 시작"))
+//                    .doOnNext(chunk -> {
+//                        int count = processedCount.incrementAndGet();
+//
+//                        // 🔥 실제 청크 내용 로깅 추가
+//                        log.info("📦 청크 {}: 크기={}bytes", count, chunk.length());
+//                        log.info("📄 청크 내용: {}", chunk);
+//
+//                        try {
+//                            // JSON 파싱 시도
+//                            if (chunk.trim().startsWith("{") || chunk.trim().startsWith("[")) {
+//                                JsonNode chunkNode = objectMapper.readTree(chunk);
+//
+//                                // 🔥 JSON 구조 로깅 추가
+//                                log.info("🔍 JSON 구조: {}", chunkNode.toPrettyString());
+//
+//                                // 배열이면 각 요소 처리
+//                                if (chunkNode.isArray()) {
+//                                    for (JsonNode item : chunkNode) {
+//                                        processArticleNode(item, validArticleCount);
+//                                    }
+//                                } else {
+//                                    processArticleNode(chunkNode, validArticleCount);
+//                                }
+//                            } else {
+//                                log.warn("⚠️ JSON이 아닌 청크: {}", chunk.substring(0, Math.min(chunk.length(), 200)));
+//                            }
+//
+//                        } catch (Exception e) {
+//                            log.warn("⚠️ 청크 파싱 실패: {} - 청크: {}", e.getMessage(),
+//                                    chunk.substring(0, Math.min(chunk.length(), 200)));
+//                        }
+//                    })
+//                    .doOnComplete(() -> {
+//                        log.info("✅ 스트림 완료 - 총 청크: {}, 유효 기사: {}",
+//                                processedCount.get(), validArticleCount.get());
+//                    })
+//                    .doOnError(error -> log.error("❌ 스트림 오류", error))
+//                    .blockLast();
+//
+//            results.put("stream_completed", true);
+//            results.put("total_chunks", processedCount.get());
+//            results.put("valid_articles", validArticleCount.get());
 
             return ResponseEntity.ok(results);
 
