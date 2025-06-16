@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.be.crawlerservice.client.Crawl4AIClient;
 import org.be.crawlerservice.client.schema.NaverNewsSchemas;
+import org.be.crawlerservice.config.SchedulingConfig;
 import org.be.crawlerservice.dto.crawl4ai.Crawl4AIRequest;
 import org.be.crawlerservice.dto.crawl4ai.Crawl4AIResult;
 import org.be.crawlerservice.dto.crawl4ai.StreamingCrawlResult;
@@ -69,6 +70,79 @@ public class CrawlerServiceImpl implements CrawlerService {
     // 하이브리드 크롤링을 위한 추가 필드
     private final ConcurrentHashMap<String, Set<String>> visitedUrls = new ConcurrentHashMap<>();
     private static final int WORKER_COUNT = 3; // Consumer 스레드 수
+
+//    private final SchedulingConfig schedulingConfig;
+//
+//    // 스케줄 관련 상수
+//    private static final String DEEP_CRAWL_SCHEDULE_ID = "deep-crawl-scheduled";
+//    private static final String BASIC_CRAWL_SCHEDULE_ID = "basic-crawl-scheduled";
+
+//    /**
+//     * Deep Crawling 스케줄 시작 (1시간마다)
+//     */
+//    public CrawlStatusDto startScheduledDeepCrawling(int intervalHours) {
+//        if (schedulingConfig.isTaskScheduled(DEEP_CRAWL_SCHEDULE_ID)) {
+//            throw new RuntimeException("Deep Crawling 스케줄이 이미 실행 중입니다");
+//        }
+//
+//        // 즉시 첫 실행
+//        CrawlStatusDto initialStatus = startDeepCrawling();
+//
+//        // 스케줄 등록
+//        long intervalMillis = intervalHours * 60 * 60 * 1000L;
+//        schedulingConfig.scheduleTask(
+//                DEEP_CRAWL_SCHEDULE_ID,
+//                () -> {
+//                    try {
+//                        log.info("스케줄된 Deep Crawling 실행 시작");
+//                        startDeepCrawling();
+//                    } catch (Exception e) {
+//                        log.error("스케줄된 Deep Crawling 실행 중 오류", e);
+//                    }
+//                },
+//                intervalMillis
+//        );
+//
+//        log.info("Deep Crawling 스케줄 시작: {}시간마다 실행", intervalHours);
+//
+//        return CrawlStatusDto.builder()
+//                .status(initialStatus.getStatus())
+//                .message(String.format("Deep Crawling이 시작되었고, %d시간마다 자동 실행됩니다", intervalHours))
+//                .build();
+//    }
+//
+//    /**
+//     * Deep Crawling 스케줄 중지
+//     */
+//    public CrawlStatusDto stopScheduledDeepCrawling() {
+//        if (!schedulingConfig.isTaskScheduled(DEEP_CRAWL_SCHEDULE_ID)) {
+//            throw new RuntimeException("실행 중인 Deep Crawling 스케줄이 없습니다");
+//        }
+//
+//        schedulingConfig.cancelTask(DEEP_CRAWL_SCHEDULE_ID);
+//
+//        return CrawlStatusDto.builder()
+//                .status(CrawlerStatus.IDLE)
+//                .message("Deep Crawling 스케줄이 중지되었습니다")
+//                .build();
+//    }
+//
+//    /**
+//     * 스케줄 상태 조회
+//     */
+//    public Map<String, Object> getScheduleStatus() {
+//        Map<String, Object> status = new HashMap<>();
+//
+//        status.put("deep_crawl_scheduled", schedulingConfig.isTaskScheduled(DEEP_CRAWL_SCHEDULE_ID));
+//        status.put("basic_crawl_scheduled", schedulingConfig.isTaskScheduled(BASIC_CRAWL_SCHEDULE_ID));
+//        status.put("current_crawling_active", isCrawling.get() || isDeepCrawling.get());
+//
+//        if (lastExecutionTimes.containsKey("deep_crawl")) {
+//            status.put("last_deep_crawl_time", lastExecutionTimes.get("deep_crawl"));
+//        }
+//
+//        return status;
+//    }
 
     @Override
     public CrawlStatusDto startCrawling(CrawlRequestDto request) {
@@ -132,6 +206,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                 crawlBasicCategoriesDeep(2, 100);
                 log.info("BFS Deep Crawling 작업 완료 - 처리: {}개, 저장: {}개",
                         deepCrawlProcessedCount.get(), deepCrawlSavedCount.get());
+                isDeepCrawling.set(false);
             } catch (Exception e) {
                 log.error("BFS Deep Crawling 작업 중 에러 발생", e);
             } finally {

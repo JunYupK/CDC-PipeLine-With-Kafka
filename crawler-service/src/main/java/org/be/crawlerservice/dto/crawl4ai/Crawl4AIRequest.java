@@ -223,6 +223,7 @@ public class Crawl4AIRequest {
                 .type("CrawlerRunConfig")
                 .params(Map.of(
                         "cache_mode", "bypass",
+                        "stream", true, // 🔥 스트림 모드
                         "wait_until", "networkidle",
                         "page_timeout", 30000,
                         "delay_before_return_html", 2.0,

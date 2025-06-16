@@ -42,4 +42,24 @@ public interface CrawlerService {
      * 성공률들
      */
     Map<String, Double> getSuccessRates();
+    // ===== 스케줄 관련 메서드 추가 =====
+
+//    /**
+//     * Deep Crawling 스케줄 시작
+//     * @param intervalHours 실행 간격 (시간)
+//     * @return 크롤링 상태
+//     */
+//    CrawlStatusDto startScheduledDeepCrawling(int intervalHours);
+//
+//    /**
+//     * Deep Crawling 스케줄 중지
+//     * @return 크롤링 상태
+//     */
+//    CrawlStatusDto stopScheduledDeepCrawling();
+//
+//    /**
+//     * 스케줄 상태 조회
+//     * @return 스케줄 상태 정보
+//     */
+//    Map<String, Object> getScheduleStatus();
 }
