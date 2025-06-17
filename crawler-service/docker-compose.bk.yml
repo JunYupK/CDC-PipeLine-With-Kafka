@@ -9,7 +9,7 @@ services:
     environment:
       - CRAWL4AI_API_TOKEN=home
       - MAX_CONCURRENT_TASKS=10
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=INFO  # 로깅 레벨 추가
       - HEADLESS=true
     volumes:
       - /dev/shm:/dev/shm
@@ -21,7 +21,7 @@ services:
         reservations:
           memory: 1G
           cpus: '1'
-    healthcheck:
+    healthcheck:  # 헬스체크 추가
       test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
       interval: 30s
       timeout: 10s
@@ -56,37 +56,40 @@ services:
         max-size: "100m"
         max-file: "3"
 
-  prometheus:
-    image: prom/prometheus:latest
-    platform: linux/amd64
-    container_name: prometheus-server
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus:/etc/prometheus:ro
-      - prometheus_data:/prometheus
+  postgres:
+    image: postgres:latest
+    platform: linux/amd64  # M1/M2 Mac 호환성
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=3d'  # 메모리 절약
-      - '--storage.tsdb.retention.size=500MB'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      #- ./init-postgres:/docker-entrypoint-initdb.d
     networks:
-      - infra-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512MB
-          cpus: '0.5'
-    depends_on:
-      - crawl4ai
-      - redis
-
+      infra-network:
+        aliases:
+          - postgres.internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 volumes:
   redis_data:
-  prometheus_data:
+  postgres_data:
 
 networks:
   infra-network:
