@@ -131,7 +131,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                 log.info("🔄 연속 BFS Deep Crawling 시작");
 
                 while (isContinuousDeepCrawling.get()) {
-                    long startTime = System.currentTimeMillis();
+                    long cycleStartTime = System.currentTimeMillis(); // 📊 추가
                     int currentCycle = cycleCount.incrementAndGet();
                     crawlerMetrics.updateCurrentCycle(currentCycle);
                     log.info("📈 크롤링 사이클 {} 시작", currentCycle);
@@ -139,16 +139,18 @@ public class CrawlerServiceImpl implements CrawlerService {
                     try {
                         // 1. 스포츠 카테고리 크롤링
                         if (isContinuousDeepCrawling.get()) {
-                            log.info("🏃 스포츠 카테고리 크롤링 시작 (사이클 {})", currentCycle);
-                            crawlSportCategoriesDeep(2, 100);
-                            log.info("✅ 스포츠 카테고리 크롤링 완료 (사이클 {})", currentCycle);
+                            long sportStartTime = System.currentTimeMillis(); // 📊 추가
+                            crawlSportCategoriesDeep(2, 300);
+                            long sportDuration = System.currentTimeMillis() - sportStartTime; // 📊 추가
+                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "sports", sportDuration);
                         }
 
-                        // 2. 일반 카테고리 크롤링
+                        // 일반 카테고리 크롤링
                         if (isContinuousDeepCrawling.get()) {
-                            log.info("📰 일반 카테고리 크롤링 시작 (사이클 {})", currentCycle);
-                            crawlBasicCategoriesDeep(2, 100);
-                            log.info("✅ 일반 카테고리 크롤링 완료 (사이클 {})", currentCycle);
+                            long basicStartTime = System.currentTimeMillis(); // 📊 추가
+                            crawlBasicCategoriesDeep(2, 300);
+                            long basicDuration = System.currentTimeMillis() - basicStartTime; // 📊 추가
+                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "basic", basicDuration); // 📊 추가
                         }
 
 
@@ -157,8 +159,9 @@ public class CrawlerServiceImpl implements CrawlerService {
                             log.info("⏰ 다음 사이클까지 30분 대기...");
                             Thread.sleep(30 * 60);
                         }
-                        long endTime = System.currentTimeMillis() - startTime;
-                        crawlerMetrics.recordCrawlTime(cycleCount.get(), endTime);
+                        // 전체 사이클 시간도 기록
+                        long totalCycleDuration = System.currentTimeMillis() - cycleStartTime; // 📊 추가
+                        crawlerMetrics.recordCycleCrawlTime(currentCycle, "total", totalCycleDuration); // 📊 추가
                     } catch (InterruptedException e) {
                         log.info("🛑 연속 크롤링이 중단되었습니다 (사이클 {})", currentCycle);
                         Thread.currentThread().interrupt();
@@ -306,6 +309,9 @@ public class CrawlerServiceImpl implements CrawlerService {
     // ===== BFS Deep Crawling 메서드들 =====
     private void crawlSportCategoriesDeep(int maxDepth, int maxPages) {
         NaverNewsSchemas.getSportsCategoryUrls().keySet().forEach(category -> {
+            int savedCount = 0;
+            int duplicateCount = 0;
+            int nullContentCount = 0;
             try {
                 log.info("카테고리 {} 딥크롤링 시작", category);
                 String startUrl = NaverNewsSchemas.getSportsCategoryUrls().get(category);
@@ -318,8 +324,8 @@ public class CrawlerServiceImpl implements CrawlerService {
                     String extracted = result.getResult().getExtractedContent();
                     // null 체크 추가
                     if (extracted == null || extracted.trim().isEmpty()) {
-                        log.warn("추출된 콘텐츠가 비어있음");
-                        crawlerMetrics.incrementNullContentCount();
+                        nullContentCount++; // 📊 추가
+                        crawlerMetrics.incrementDailyNullContentCount(category);
                         continue; // 다음 결과로 넘어감
                     }
                     log.info("추출 데이터 :"+ extracted);
@@ -330,18 +336,24 @@ public class CrawlerServiceImpl implements CrawlerService {
                         String content = getTextValue(articleNode, "content");
                         String author = getTextValue(articleNode, "author");
                         String publishedDateRaw  = getTextValue(articleNode, "published_date");
-                        if(title == null || content == null || author == null ) break;
+                        if(title == null || content == null || author == null ) {
+                            nullContentCount++; // 📊 추가
+                            crawlerMetrics.incrementDailyNullContentCount(category); // 📊 추가
+                            break;
+                        }
                         // 중복 체크
                         if (articleRepository.existsByLink(link)) {
-                            log.debug("이미 존재하는 기사 스킵: {}", link);
-                            crawlerMetrics.incrementDuplicateCount();
+                            duplicateCount++; // 📊 추가
+                            crawlerMetrics.incrementDailyDuplicateCount(category); // 📊 추가
                             continue;
                         }
                         //기자 이름 추출
                         author = author.split(" ")[0];
                         // Article 저장
                         Article article = saveArticle(title, content, link, category,author);
-                        crawlerMetrics.incrementCrawlSuccess();
+                        savedCount++; // 📊 추가
+                        crawlerMetrics.incrementDailyArticlesSaved(category); // 📊 추가
+                        crawlerMetrics.incrementDailyCrawlSuccess(category); // 📊 추가
                     }
                 }
                 log.info("카테고리 {} 딥 크롤링 완료", category);
@@ -355,6 +367,9 @@ public class CrawlerServiceImpl implements CrawlerService {
      */
     private void crawlBasicCategoriesDeep(int maxDepth, int maxPages) {
         NaverNewsSchemas.getCategoryUrls().keySet().forEach(category -> {
+            int savedCount = 0;
+            int duplicateCount = 0;
+            int nullContentCount = 0;
             try {
                 String startUrl = NaverNewsSchemas.getCategoryUrls().get(category);
                 log.info("url {} 딥크롤링 시작", startUrl);
@@ -367,8 +382,8 @@ public class CrawlerServiceImpl implements CrawlerService {
                     String extracted = result.getResult().getExtractedContent();
                     // null 체크 추가
                     if (extracted == null || extracted.trim().isEmpty()) {
-                        log.warn("추출된 콘텐츠가 비어있음");
-                        crawlerMetrics.incrementNullContentCount();
+                        nullContentCount++; // 📊 추가
+                        crawlerMetrics.incrementDailyNullContentCount(category); // 📊 추가
                         continue; // 다음 결과로 넘어감
                     }
                     JsonNode extractedJson = objectMapper.readTree(extracted);
@@ -378,11 +393,15 @@ public class CrawlerServiceImpl implements CrawlerService {
                         String content = getTextValue(articleNode, "content");
                         String author = getTextValue(articleNode, "author");
                         String publishedDateRaw  = getTextValue(articleNode, "published_date");
-                        if(title == null || content == null || author == null ) break;
+                        if(title == null || content == null || author == null ) {
+                            nullContentCount++; // 📊 추가
+                            crawlerMetrics.incrementDailyNullContentCount(category); // 📊 추가
+                            break;
+                        }
                         // 중복 체크
                         if (articleRepository.existsByLink(link)) {
-                            log.debug("이미 존재하는 기사 스킵: {}", link);
-                            crawlerMetrics.incrementDuplicateCount();
+                            duplicateCount++; // 📊 추가
+                            crawlerMetrics.incrementDailyDuplicateCount(category); // 📊 추가
                             continue;
                         }
                         //기자 이름 추출
@@ -390,7 +409,9 @@ public class CrawlerServiceImpl implements CrawlerService {
 
                         // Article 저장
                         Article article = saveArticle(title, content, link, category,author);
-                        crawlerMetrics.incrementCrawlSuccess();
+                        savedCount++; // 📊 추가
+                        crawlerMetrics.incrementDailyArticlesSaved(category); // 📊 추가
+                        crawlerMetrics.incrementDailyCrawlSuccess(category); // 📊 추가
                     }
                 }
                 log.info("카테고리 {} 딥 크롤링 완료", category);
