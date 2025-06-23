@@ -62,87 +62,16 @@ public class CrawlerServiceImpl implements CrawlerService {
     private final AtomicInteger processedCount = new AtomicInteger(0);
     private final AtomicInteger totalCount = new AtomicInteger(0);
     private final AtomicInteger skippedCount = new AtomicInteger(0);
+    private final AtomicBoolean isContinuousDeepCrawling = new AtomicBoolean(false);
+    private final AtomicInteger cycleCount = new AtomicInteger(0);
 
     // Deep Crawling 전용 상태 관리
     private final AtomicInteger deepCrawlProcessedCount = new AtomicInteger(0);
     private final AtomicInteger deepCrawlSavedCount = new AtomicInteger(0);
-
     // 하이브리드 크롤링을 위한 추가 필드
     private final ConcurrentHashMap<String, Set<String>> visitedUrls = new ConcurrentHashMap<>();
     private static final int WORKER_COUNT = 3; // Consumer 스레드 수
 
-//    private final SchedulingConfig schedulingConfig;
-//
-//    // 스케줄 관련 상수
-//    private static final String DEEP_CRAWL_SCHEDULE_ID = "deep-crawl-scheduled";
-//    private static final String BASIC_CRAWL_SCHEDULE_ID = "basic-crawl-scheduled";
-
-//    /**
-//     * Deep Crawling 스케줄 시작 (1시간마다)
-//     */
-//    public CrawlStatusDto startScheduledDeepCrawling(int intervalHours) {
-//        if (schedulingConfig.isTaskScheduled(DEEP_CRAWL_SCHEDULE_ID)) {
-//            throw new RuntimeException("Deep Crawling 스케줄이 이미 실행 중입니다");
-//        }
-//
-//        // 즉시 첫 실행
-//        CrawlStatusDto initialStatus = startDeepCrawling();
-//
-//        // 스케줄 등록
-//        long intervalMillis = intervalHours * 60 * 60 * 1000L;
-//        schedulingConfig.scheduleTask(
-//                DEEP_CRAWL_SCHEDULE_ID,
-//                () -> {
-//                    try {
-//                        log.info("스케줄된 Deep Crawling 실행 시작");
-//                        startDeepCrawling();
-//                    } catch (Exception e) {
-//                        log.error("스케줄된 Deep Crawling 실행 중 오류", e);
-//                    }
-//                },
-//                intervalMillis
-//        );
-//
-//        log.info("Deep Crawling 스케줄 시작: {}시간마다 실행", intervalHours);
-//
-//        return CrawlStatusDto.builder()
-//                .status(initialStatus.getStatus())
-//                .message(String.format("Deep Crawling이 시작되었고, %d시간마다 자동 실행됩니다", intervalHours))
-//                .build();
-//    }
-//
-//    /**
-//     * Deep Crawling 스케줄 중지
-//     */
-//    public CrawlStatusDto stopScheduledDeepCrawling() {
-//        if (!schedulingConfig.isTaskScheduled(DEEP_CRAWL_SCHEDULE_ID)) {
-//            throw new RuntimeException("실행 중인 Deep Crawling 스케줄이 없습니다");
-//        }
-//
-//        schedulingConfig.cancelTask(DEEP_CRAWL_SCHEDULE_ID);
-//
-//        return CrawlStatusDto.builder()
-//                .status(CrawlerStatus.IDLE)
-//                .message("Deep Crawling 스케줄이 중지되었습니다")
-//                .build();
-//    }
-//
-//    /**
-//     * 스케줄 상태 조회
-//     */
-//    public Map<String, Object> getScheduleStatus() {
-//        Map<String, Object> status = new HashMap<>();
-//
-//        status.put("deep_crawl_scheduled", schedulingConfig.isTaskScheduled(DEEP_CRAWL_SCHEDULE_ID));
-//        status.put("basic_crawl_scheduled", schedulingConfig.isTaskScheduled(BASIC_CRAWL_SCHEDULE_ID));
-//        status.put("current_crawling_active", isCrawling.get() || isDeepCrawling.get());
-//
-//        if (lastExecutionTimes.containsKey("deep_crawl")) {
-//            status.put("last_deep_crawl_time", lastExecutionTimes.get("deep_crawl"));
-//        }
-//
-//        return status;
-//    }
 
     @Override
     public CrawlStatusDto startCrawling(CrawlRequestDto request) {
@@ -186,50 +115,99 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     @Override
     public CrawlStatusDto startDeepCrawling() {
-        if (isDeepCrawling.get()) {
+        if (isDeepCrawling.get() || isContinuousDeepCrawling.get()) {
             throw new RuntimeException("딥 크롤링이 이미 진행 중입니다");
         }
+
         // Deep Crawling 상태 설정
         isDeepCrawling.set(true);
+        isContinuousDeepCrawling.set(true);
         crawlStartTime.set(LocalDateTime.now());
-        deepCrawlProcessedCount.set(0);
-        deepCrawlSavedCount.set(0);
+        cycleCount.set(0);
 
-        // 🔥 CompletableFuture로 비동기 실행
+        // 🔥 무한 반복 비동기 실행
         CompletableFuture.runAsync(() -> {
             try {
-                log.info("비동기 스포츠 분야 BFS Deep Crawling 작업 시작");
-                //스포츠 분야 크롤링
-                crawlSportCategoriesDeep(2, 100);
-                log.info("비동기 BFS 일반 Deep Crawling 작업 시작");
-                //일반 유형 기사 크롤링
-                crawlBasicCategoriesDeep(2, 100);
-                log.info("BFS Deep Crawling 작업 완료 - 처리: {}개, 저장: {}개",
-                        deepCrawlProcessedCount.get(), deepCrawlSavedCount.get());
-                isDeepCrawling.set(false);
+                log.info("🔄 연속 BFS Deep Crawling 시작");
+
+                while (isContinuousDeepCrawling.get()) {
+                    long startTime = System.currentTimeMillis();
+                    int currentCycle = cycleCount.incrementAndGet();
+                    crawlerMetrics.updateCurrentCycle(currentCycle);
+                    log.info("📈 크롤링 사이클 {} 시작", currentCycle);
+
+                    try {
+                        // 1. 스포츠 카테고리 크롤링
+                        if (isContinuousDeepCrawling.get()) {
+                            log.info("🏃 스포츠 카테고리 크롤링 시작 (사이클 {})", currentCycle);
+                            crawlSportCategoriesDeep(2, 100);
+                            log.info("✅ 스포츠 카테고리 크롤링 완료 (사이클 {})", currentCycle);
+                        }
+
+                        // 2. 일반 카테고리 크롤링
+                        if (isContinuousDeepCrawling.get()) {
+                            log.info("📰 일반 카테고리 크롤링 시작 (사이클 {})", currentCycle);
+                            crawlBasicCategoriesDeep(2, 100);
+                            log.info("✅ 일반 카테고리 크롤링 완료 (사이클 {})", currentCycle);
+                        }
+
+
+                        // 3. 사이클 간 대기 시간
+                        if (isContinuousDeepCrawling.get()) {
+                            log.info("⏰ 다음 사이클까지 30분 대기...");
+                            Thread.sleep(30 * 60);
+                        }
+                        long endTime = System.currentTimeMillis() - startTime;
+                        crawlerMetrics.recordCrawlTime(cycleCount.get(), endTime);
+                    } catch (InterruptedException e) {
+                        log.info("🛑 연속 크롤링이 중단되었습니다 (사이클 {})", currentCycle);
+                        Thread.currentThread().interrupt();
+                        break;
+                    } catch (Exception e) {
+                        log.error("❌ 사이클 {} 중 오류 발생", currentCycle, e);
+
+                        // 오류 발생 시 5분 대기 후 다음 사이클 진행
+                        try {
+                            Thread.sleep(5 * 60 * 1000);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                }
+
+                log.info("🏁 연속 BFS Deep Crawling 종료 - 총 사이클: {}", cycleCount.get());
+
             } catch (Exception e) {
-                log.error("BFS Deep Crawling 작업 중 에러 발생", e);
+                log.error("❌ 연속 BFS Deep Crawling 작업 중 심각한 오류", e);
             } finally {
                 isDeepCrawling.set(false);
+                isContinuousDeepCrawling.set(false);
             }
         });
 
         return CrawlStatusDto.builder()
                 .status(CrawlerStatus.RUNNING)
                 .startTime(crawlStartTime.get())
-                .message("BFS Deep Crawling이 시작되었습니다")
+                .message("연속 BFS Deep Crawling이 시작되었습니다 (무한 반복)")
                 .build();
     }
 
     @Override
     public CrawlStatusDto stopCrawling() {
-        boolean wasCrawling = isCrawling.get() || isDeepCrawling.get();
+        boolean wasCrawling = isCrawling.get() || isDeepCrawling.get() || isContinuousDeepCrawling.get();
 
         if (!wasCrawling) {
             throw new RuntimeException("실행 중인 크롤링 작업이 없습니다");
         }
 
-        log.info("크롤링 중지 요청");
+        log.info("🛑 크롤링 중지 요청");
+
+        // 연속 크롤링 중지
+        if (isContinuousDeepCrawling.get()) {
+            log.info("🔄 연속 Deep Crawling 중지 중...");
+            isContinuousDeepCrawling.set(false);
+        }
 
         // 현재 작업 취소
         if (currentCrawlTask != null && !currentCrawlTask.isDone()) {
@@ -244,7 +222,6 @@ public class CrawlerServiceImpl implements CrawlerService {
                 .message("크롤링이 중지되었습니다")
                 .build();
     }
-
     @Override
     public CrawlStatusDto getCurrentStatus() {
         if (isCrawling.get()) {
@@ -257,7 +234,11 @@ public class CrawlerServiceImpl implements CrawlerService {
                     .lastExecutionTimes(new HashMap<>(lastExecutionTimes))
                     .message("기본 크롤링이 진행 중입니다")
                     .build();
-        } else if (isDeepCrawling.get()) {
+        } else if (isDeepCrawling.get() || isContinuousDeepCrawling.get()) {
+            String message = isContinuousDeepCrawling.get() ?
+                    String.format("연속 BFS Deep Crawling 진행 중 (사이클 %d)", cycleCount.get()) :
+                    "BFS Deep Crawling이 진행 중입니다";
+
             return CrawlStatusDto.builder()
                     .status(CrawlerStatus.RUNNING)
                     .currentCategory(currentCategory.get())
@@ -265,7 +246,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                     .processedArticles(deepCrawlProcessedCount.get())
                     .errorCounts(new HashMap<>(errorCounts))
                     .lastExecutionTimes(new HashMap<>(lastExecutionTimes))
-                    .message("BFS Deep Crawling이 진행 중입니다")
+                    .message(message)
                     .build();
         } else {
             return CrawlStatusDto.builder()
@@ -276,6 +257,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                     .build();
         }
     }
+
 
     @Override
     public StatsResponseDto getCrawlingStats() {
@@ -337,6 +319,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                     // null 체크 추가
                     if (extracted == null || extracted.trim().isEmpty()) {
                         log.warn("추출된 콘텐츠가 비어있음");
+                        crawlerMetrics.incrementNullContentCount();
                         continue; // 다음 결과로 넘어감
                     }
                     log.info("추출 데이터 :"+ extracted);
@@ -351,13 +334,14 @@ public class CrawlerServiceImpl implements CrawlerService {
                         // 중복 체크
                         if (articleRepository.existsByLink(link)) {
                             log.debug("이미 존재하는 기사 스킵: {}", link);
-                            skippedCount.incrementAndGet();
+                            crawlerMetrics.incrementDuplicateCount();
                             continue;
                         }
                         //기자 이름 추출
                         author = author.split(" ")[0];
                         // Article 저장
                         Article article = saveArticle(title, content, link, category,author);
+                        crawlerMetrics.incrementCrawlSuccess();
                     }
                 }
                 log.info("카테고리 {} 딥 크롤링 완료", category);
@@ -384,9 +368,9 @@ public class CrawlerServiceImpl implements CrawlerService {
                     // null 체크 추가
                     if (extracted == null || extracted.trim().isEmpty()) {
                         log.warn("추출된 콘텐츠가 비어있음");
+                        crawlerMetrics.incrementNullContentCount();
                         continue; // 다음 결과로 넘어감
                     }
-                    //log.info("추출 데이터 :"+ extracted);
                     JsonNode extractedJson = objectMapper.readTree(extracted);
                     String link = result.getResult().getUrl();
                     for (JsonNode articleNode : extractedJson) {
@@ -398,7 +382,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                         // 중복 체크
                         if (articleRepository.existsByLink(link)) {
                             log.debug("이미 존재하는 기사 스킵: {}", link);
-                            skippedCount.incrementAndGet();
+                            crawlerMetrics.incrementDuplicateCount();
                             continue;
                         }
                         //기자 이름 추출
@@ -406,6 +390,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
                         // Article 저장
                         Article article = saveArticle(title, content, link, category,author);
+                        crawlerMetrics.incrementCrawlSuccess();
                     }
                 }
                 log.info("카테고리 {} 딥 크롤링 완료", category);
@@ -570,20 +555,13 @@ public class CrawlerServiceImpl implements CrawlerService {
     }
 
 
-    /**
-     * 성공 메트릭 업데이트
-     */
-    private void updateSuccessMetrics(String category, int articleCount, long crawlTime) {
-        crawlerMetrics.incrementCrawlSuccess(category);
-        crawlerMetrics.recordCrawlTime(category, crawlTime);
-        errorCounts.put(category, 0);
-    }
+
 
     /**
      * 실패 메트릭 업데이트
      */
     private void updateFailureMetrics(String category) {
-        crawlerMetrics.incrementCrawlFailure(category);
+        crawlerMetrics.incrementCrawlFailure();
         errorCounts.merge(category, 1, Integer::sum);
     }
 
@@ -601,10 +579,11 @@ public class CrawlerServiceImpl implements CrawlerService {
     private void resetCrawlingState() {
         isCrawling.set(false);
         isDeepCrawling.set(false);
+        isContinuousDeepCrawling.set(false);
         currentCategory.set(null);
         crawlStartTime.set(null);
         currentCrawlTask = null;
-        visitedUrls.clear(); // 메모리 정리
+        visitedUrls.clear();
     }
 
     /**

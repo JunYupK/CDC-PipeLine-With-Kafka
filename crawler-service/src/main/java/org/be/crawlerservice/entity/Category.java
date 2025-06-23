@@ -2,7 +2,6 @@ package org.be.crawlerservice.entity;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.be.crawlerservice.entity.base.TimestampEntity;
 
@@ -10,7 +9,6 @@ import jakarta.persistence.*;
 
 @Entity
 @Table(name = "categories")
-@Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor

@@ -18,11 +18,16 @@ public class CrawlerMetrics {
     private final MeterRegistry meterRegistry;
 
     // 크롤링 메트릭
-    private final ConcurrentHashMap<String, Counter> articlesProcessedCounters = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Counter> duplicateCounters = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Counter> nullContentCounters = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Timer> crawlTimers = new ConcurrentHashMap<>();
-
+    private Counter articlesProcessedCounter;
+    private Counter duplicateCounter;
+    private Counter nullContentCounter;
+    private Counter crawlSuccessCounter;
+    private Counter crawlFailureCounter;
+    private final ConcurrentHashMap<Integer, Timer> crawlTimers = new ConcurrentHashMap<>();
+    private final AtomicLong deepCrawlStatus = new AtomicLong(0);
+    // Deep Crawling 전용 메트릭 추가
+    private final ConcurrentHashMap<String, Counter> categoryArticlesCounter = new ConcurrentHashMap<>();
+    private final AtomicLong currentCycle = new AtomicLong(0);
     // 시스템 메트릭
     private Gauge memoryUsageGauge;
     private Gauge cpuUsageGauge;
@@ -35,8 +40,40 @@ public class CrawlerMetrics {
     @PostConstruct
     public void initializeMetrics() {
         log.info("Initializing crawler metrics...");
+
+        // Counter 초기화
+        articlesProcessedCounter = Counter.builder("crawler.articles.processed")
+                .description("Total articles processed")
+                .register(meterRegistry);
+
+        duplicateCounter = Counter.builder("crawler.articles.duplicate")
+                .description("Total duplicate articles")
+                .register(meterRegistry);
+
+        nullContentCounter = Counter.builder("crawler.articles.null_content")
+                .description("Total null content articles")
+                .register(meterRegistry);
+
+        crawlSuccessCounter = Counter.builder("crawler.crawl.success")
+                .description("Total successful crawls")
+                .register(meterRegistry);
+
+        crawlFailureCounter = Counter.builder("crawler.crawl.failure")
+                .description("Total failed crawls")
+                .register(meterRegistry);
+
+        // Deep Crawling 상태 Gauge
+        Gauge.builder("crawler.deep_crawl.status", deepCrawlStatus, AtomicLong::get)
+                .description("Deep crawling status (0:idle, 1:running)")
+                .register(meterRegistry);
+
         initializeSystemMetrics();
         log.info("Crawler metrics initialized successfully");
+
+        // Deep Crawling 사이클 Gauge 추가
+        Gauge.builder("crawler.deep_crawl.current_cycle", currentCycle, AtomicLong::get)
+                .description("Current deep crawling cycle number")
+                .register(meterRegistry);
     }
 
     private void initializeSystemMetrics() {
@@ -55,36 +92,36 @@ public class CrawlerMetrics {
 
     // === 메트릭 업데이트 메서드들 ===
 
-    public void incrementArticlesProcessed(String category, int count) {
-        Counter counter = articlesProcessedCounters.computeIfAbsent(category,
-                cat -> Counter.builder("crawler.articles.processed")
-                        .tag("category", cat)
-                        .register(meterRegistry));
-        counter.increment(count);
+    public void incrementArticlesProcessed(int count) {
+        articlesProcessedCounter.increment(count);
     }
 
-    public void incrementDuplicateCount(String category) {
-        Counter counter = duplicateCounters.computeIfAbsent(category,
-                cat -> Counter.builder("crawler.articles.duplicate")
-                        .tag("category", cat)
-                        .register(meterRegistry));
-        counter.increment();
+    public void incrementDuplicateCount() {
+        duplicateCounter.increment();
     }
 
-    public void incrementNullContentCount(String category) {
-        Counter counter = nullContentCounters.computeIfAbsent(category,
-                cat -> Counter.builder("crawler.articles.null_content")
-                        .tag("category", cat)
-                        .register(meterRegistry));
-        counter.increment();
+    public void incrementNullContentCount() {
+        nullContentCounter.increment();
     }
 
-    public void recordCrawlTime(String category, long timeInMillis) {
-        Timer timer = crawlTimers.computeIfAbsent(category,
-                cat -> Timer.builder("crawler.crawl.time")
-                        .tag("category", cat)
+    public void incrementCrawlSuccess() {
+        crawlSuccessCounter.increment();
+    }
+
+    public void incrementCrawlFailure() {
+        crawlFailureCounter.increment();
+    }
+
+    public void recordCrawlTime(int cycleCount, long timeInMillis) {
+        Timer timer = crawlTimers.computeIfAbsent(cycleCount,
+                cycle -> Timer.builder("crawler.crawl.time")
+                        .tag("cycle", String.valueOf(cycle))
                         .register(meterRegistry));
         timer.record(timeInMillis, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    public void setDeepCrawlStatus(boolean running) {
+        deepCrawlStatus.set(running ? 1 : 0);
     }
 
     // === 시스템 메트릭 헬퍼 메서드들 ===
@@ -104,5 +141,8 @@ public class CrawlerMetrics {
 
     private int getCurrentThreadCount() {
         return Thread.activeCount();
+    }
+    public void updateCurrentCycle(int cycle) {
+        currentCycle.set(cycle);
     }
 }
