@@ -68,6 +68,12 @@ public class CrawlerServiceImpl implements CrawlerService {
     // Deep Crawling 전용 상태 관리
     private final AtomicInteger deepCrawlProcessedCount = new AtomicInteger(0);
     private final AtomicInteger deepCrawlSavedCount = new AtomicInteger(0);
+
+    // ===== 병렬처리 설정 =====
+    private final Semaphore crawlingSemaphore = new Semaphore(4); // 최대 4개 동시 실행
+    private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(6); // 카테고리별 처리용
+    private final ScheduledExecutorService resourceMonitor = Executors.newSingleThreadScheduledExecutor();
+
     // 하이브리드 크롤링을 위한 추가 필드
     private final ConcurrentHashMap<String, Set<String>> visitedUrls = new ConcurrentHashMap<>();
     private static final int WORKER_COUNT = 3; // Consumer 스레드 수
@@ -140,7 +146,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                         // 1. 스포츠 카테고리 크롤링
                         if (isContinuousDeepCrawling.get()) {
                             long sportStartTime = System.currentTimeMillis(); // 📊 추가
-                            crawlSportCategoriesDeep(2, 300);
+                            crawlSportCategoriesDeep(2, 150);
                             long sportDuration = System.currentTimeMillis() - sportStartTime; // 📊 추가
                             crawlerMetrics.recordCycleCrawlTime(currentCycle, "sports", sportDuration);
                         }
@@ -148,7 +154,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                         // 일반 카테고리 크롤링
                         if (isContinuousDeepCrawling.get()) {
                             long basicStartTime = System.currentTimeMillis(); // 📊 추가
-                            crawlBasicCategoriesDeep(2, 300);
+                            crawlBasicCategoriesDeep(2, 150);
                             long basicDuration = System.currentTimeMillis() - basicStartTime; // 📊 추가
                             crawlerMetrics.recordCycleCrawlTime(currentCycle, "basic", basicDuration); // 📊 추가
                         }
@@ -195,6 +201,7 @@ public class CrawlerServiceImpl implements CrawlerService {
                 .message("연속 BFS Deep Crawling이 시작되었습니다 (무한 반복)")
                 .build();
     }
+
 
     @Override
     public CrawlStatusDto stopCrawling() {
@@ -308,120 +315,171 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     // ===== BFS Deep Crawling 메서드들 =====
     private void crawlSportCategoriesDeep(int maxDepth, int maxPages) {
-        NaverNewsSchemas.getSportsCategoryUrls().keySet().forEach(category -> {
-            int savedCount = 0;
-            int duplicateCount = 0;
-            int nullContentCount = 0;
-            try {
-                log.info("카테고리 {} 딥크롤링 시작", category);
-                String startUrl = NaverNewsSchemas.getSportsCategoryUrls().get(category);
-                Map<String, Object> schema = NaverNewsSchemas.getSportsNewsSchema();
-                CompletableFuture<List<Crawl4AIResult>> crawlResults = crawl4AIClient.crawlBFSAsync(startUrl,maxDepth,maxPages, schema);
-                //딥 크롤링 결과 파싱 시작
-                for(Crawl4AIResult result : crawlResults.get()) {
-                    if(result == null) continue;
-                    log.info("결과 : " + result.getResult().getUrl());
-                    String extracted = result.getResult().getExtractedContent();
-                    // null 체크 추가
-                    if (extracted == null || extracted.trim().isEmpty()) {
-                        nullContentCount++; // 📊 추가
-                        crawlerMetrics.incrementDailyNullContentCount(category);
-                        continue; // 다음 결과로 넘어감
-                    }
-                    log.info("추출 데이터 :"+ extracted);
-                    JsonNode extractedJson = objectMapper.readTree(extracted);
-                    String link = result.getResult().getUrl();
-                    for (JsonNode articleNode : extractedJson) {
-                        String title = getTextValue(articleNode, "title");
-                        String content = getTextValue(articleNode, "content");
-                        String author = getTextValue(articleNode, "author");
-                        String publishedDateRaw  = getTextValue(articleNode, "published_date");
-                        if(title == null || content == null || author == null ) {
-                            nullContentCount++; // 📊 추가
-                            crawlerMetrics.incrementDailyNullContentCount(category); // 📊 추가
-                            break;
-                        }
-                        // 중복 체크
-                        if (articleRepository.existsByLink(link)) {
-                            duplicateCount++; // 📊 추가
-                            crawlerMetrics.incrementDailyDuplicateCount(category); // 📊 추가
-                            continue;
-                        }
-                        //기자 이름 추출
-                        author = author.split(" ")[0];
-                        // Article 저장
-                        Article article = saveArticle(title, content, link, category,author);
-                        savedCount++; // 📊 추가
-                        crawlerMetrics.incrementDailyArticlesSaved(category); // 📊 추가
-                        crawlerMetrics.incrementDailyCrawlSuccess(category); // 📊 추가
-                    }
+        Map<String,String> categories = NaverNewsSchemas.getCategoryUrls();
+        List<CompletableFuture<Void>> categoryTasks = new ArrayList<>();
+
+        categories.entrySet().forEach(entry -> {
+            String category = entry.getKey();
+            String startUrl = entry.getValue();
+            CompletableFuture<Void> task = CompletableFuture.runAsync(() -> {
+                crawlingSemaphore.tryAcquire();
+                try {
+                    long categoryStartTime = System.currentTimeMillis();
+                    log.info("🏃‍♂️ [{}] 병렬 딥크롤링 시작", category);
+                    processCategoryDeep(category, startUrl, NaverNewsSchemas.getSportsNewsSchema(), maxDepth, maxPages);
+
+                    long categoryDuration = System.currentTimeMillis() - categoryStartTime;
+                    log.info("✅ [{}] 병렬 딥크롤링 완료 ({}ms)", category, categoryDuration);
+                }catch (Exception e){
+                    log.error("❌ [{}] 병렬 딥크롤링 중 오류", category, e);
+                    crawlerMetrics.incrementDailyCrawlFailure(category, "parallel_error");
+                }finally {
+                    crawlingSemaphore.release();
                 }
-                log.info("카테고리 {} 딥 크롤링 완료", category);
-            } catch (Exception e) {
-                log.error("카테고리 {} 딥 크롤링 중 에러 발생", category, e);
-            }
+            },parallelExecutor);
+
+            categoryTasks.add(task);
         });
+        // 모든 스포츠 카테고리 완료 대기
+        CompletableFuture<Void> allSportsTasks = CompletableFuture.allOf(
+                categoryTasks.toArray(new CompletableFuture[0])
+        );
+
+        try {
+            allSportsTasks.get(10, TimeUnit.MINUTES); // 10분 타임아웃
+            log.info("🏆 모든 스포츠 카테고리 병렬처리 완료");
+        } catch (Exception e) {
+            log.error("❌ 스포츠 카테고리 병렬처리 중 타임아웃 또는 오류", e);
+        }
     }
     /**
      * BFS Deep Crawling 실행
      */
-    private void crawlBasicCategoriesDeep(int maxDepth, int maxPages) {
-        NaverNewsSchemas.getCategoryUrls().keySet().forEach(category -> {
-            int savedCount = 0;
-            int duplicateCount = 0;
-            int nullContentCount = 0;
-            try {
-                String startUrl = NaverNewsSchemas.getCategoryUrls().get(category);
-                log.info("url {} 딥크롤링 시작", startUrl);
-                Map<String, Object> schema = NaverNewsSchemas.getBasicNewsSchema();
-                CompletableFuture<List<Crawl4AIResult>> crawlResults = crawl4AIClient.crawlBFSAsync(startUrl,maxDepth,maxPages, schema);
-                //딥 크롤링 결과 파싱 시작
-                for(Crawl4AIResult result : crawlResults.get()) {
-                    if(result == null) continue;
-                    log.info("결과 : " + result.getResult().getUrl());
-                    String extracted = result.getResult().getExtractedContent();
-                    // null 체크 추가
-                    if (extracted == null || extracted.trim().isEmpty()) {
-                        nullContentCount++; // 📊 추가
-                        crawlerMetrics.incrementDailyNullContentCount(category); // 📊 추가
-                        continue; // 다음 결과로 넘어감
-                    }
-                    JsonNode extractedJson = objectMapper.readTree(extracted);
-                    String link = result.getResult().getUrl();
-                    for (JsonNode articleNode : extractedJson) {
+    private void crawlBasicCategoriesDeep(int maxDepth, int maxPages)  {
+        Map<String, String> categories = NaverNewsSchemas.getCategoryUrls();
+
+        List<CompletableFuture<Void>> categoryTasks = new ArrayList<>();
+
+        categories.entrySet().forEach(entry -> {
+            String category = entry.getKey();
+            String startUrl = entry.getValue();
+
+            CompletableFuture<Void> task = CompletableFuture.runAsync(() -> {
+                crawlingSemaphore.tryAcquire();
+                try {
+                    long categoryStartTime = System.currentTimeMillis();
+                    log.info("📰 [{}] 병렬 딥크롤링 시작", category);
+
+                    processCategoryDeep(category, startUrl, NaverNewsSchemas.getBasicNewsSchema(), maxDepth, maxPages);
+
+                    long categoryDuration = System.currentTimeMillis() - categoryStartTime;
+                    log.info("✅ [{}] 병렬 딥크롤링 완료 ({}ms)", category, categoryDuration);
+
+                } catch (Exception e) {
+                    log.error("❌ [{}] 병렬 딥크롤링 중 오류", category, e);
+                    crawlerMetrics.incrementDailyCrawlFailure(category, "parallel_error");
+                } finally {
+                    crawlingSemaphore.release();
+                }
+            }, parallelExecutor);
+
+            categoryTasks.add(task);
+        });
+
+        // 모든 일반 카테고리 완료 대기
+        CompletableFuture<Void> allBasicTasks = CompletableFuture.allOf(
+                categoryTasks.toArray(new CompletableFuture[0])
+        );
+
+        try {
+            allBasicTasks.get(15, TimeUnit.MINUTES); // 15분 타임아웃 (일반 카테고리가 더 많음)
+            log.info("📚 모든 일반 카테고리 병렬처리 완료");
+        } catch (Exception e) {
+            log.error("❌ 일반 카테고리 병렬처리 중 타임아웃 또는 오류", e);
+        }
+    }
+    /**
+     * 🔧 개별 카테고리 처리 (공통 로직)
+     */
+    private void processCategoryDeep(String category, String startUrl, Map<String, Object> schema,
+                                     int maxDepth, int maxPages) {
+        int savedCount = 0;
+        int duplicateCount = 0;
+        int nullContentCount = 0;
+
+        try {
+            log.debug("🎯 [{}] URL: {}", category, startUrl);
+
+            // 비동기 크롤링 실행
+            CompletableFuture<List<Crawl4AIResult>> crawlResults =
+                    crawl4AIClient.crawlBFSAsync(startUrl, maxDepth, maxPages, schema);
+
+            List<Crawl4AIResult> results = crawlResults.get(5, TimeUnit.MINUTES); // 5분 타임아웃
+
+            for (Crawl4AIResult result : results) {
+                if (result == null) continue;
+
+                String extracted = result.getResult().getExtractedContent();
+                if (extracted == null || extracted.trim().isEmpty()) {
+                    nullContentCount++;
+                    crawlerMetrics.incrementDailyNullContentCount(category);
+                    continue;
+                }
+
+                JsonNode extractedJson = objectMapper.readTree(extracted);
+                String link = result.getResult().getUrl();
+
+                for (JsonNode articleNode : extractedJson) {
+                    try {
                         String title = getTextValue(articleNode, "title");
                         String content = getTextValue(articleNode, "content");
                         String author = getTextValue(articleNode, "author");
-                        String publishedDateRaw  = getTextValue(articleNode, "published_date");
-                        if(title == null || content == null || author == null ) {
-                            nullContentCount++; // 📊 추가
-                            crawlerMetrics.incrementDailyNullContentCount(category); // 📊 추가
-                            break;
-                        }
-                        // 중복 체크
-                        if (articleRepository.existsByLink(link)) {
-                            duplicateCount++; // 📊 추가
-                            crawlerMetrics.incrementDailyDuplicateCount(category); // 📊 추가
+
+                        if (title == null || content == null) {
+                            nullContentCount++;
+                            crawlerMetrics.incrementDailyNullContentCount(category);
                             continue;
                         }
-                        //기자 이름 추출
-                        author = author.split(" ")[0];
+
+                        // 중복 체크
+                        if (articleRepository.existsByLink(link)) {
+                            duplicateCount++;
+                            crawlerMetrics.incrementDailyDuplicateCount(category);
+                            continue;
+                        }
+
+                        // 기자 이름 처리
+                        if (author != null && author.contains(" ")) {
+                            author = author.split(" ")[0];
+                        }
 
                         // Article 저장
-                        Article article = saveArticle(title, content, link, category,author);
-                        savedCount++; // 📊 추가
-                        crawlerMetrics.incrementDailyArticlesSaved(category); // 📊 추가
-                        crawlerMetrics.incrementDailyCrawlSuccess(category); // 📊 추가
+                        saveArticle(title, content, link, category, author);
+                        savedCount++;
+                        crawlerMetrics.incrementDailyArticlesSaved(category);
+                        crawlerMetrics.incrementDailyCrawlSuccess(category);
+
+                        deepCrawlProcessedCount.incrementAndGet();
+
+                    } catch (Exception e) {
+                        log.warn("❌ [{}] 개별 기사 처리 중 오류: {}", category, e.getMessage());
+                        nullContentCount++;
+                        crawlerMetrics.incrementDailyNullContentCount(category);
                     }
                 }
-                log.info("카테고리 {} 딥 크롤링 완료", category);
-            } catch (Exception e) {
-                log.error("카테고리 {} 딥 크롤링 중 에러 발생", category, e);
-                // 한 카테고리 실패해도 다른 카테고리는 계속 진행
             }
-        });
-    }
 
+            log.info("📊 [{}] 완료 - 저장: {}, 중복: {}, 누락: {}",
+                    category, savedCount, duplicateCount, nullContentCount);
+
+        } catch (TimeoutException e) {
+            log.error("⏰ [{}] 크롤링 타임아웃 (5분)", category);
+            crawlerMetrics.incrementDailyCrawlFailure(category, "timeout");
+        } catch (Exception e) {
+            log.error("❌ [{}] 크롤링 중 오류", category, e);
+            crawlerMetrics.incrementDailyCrawlFailure(category, "error");
+        }
+    }
 
     private void crawlCategory(String category) throws JsonProcessingException {
         String url = NaverNewsSchemas.getCategoryUrls().get(category);
