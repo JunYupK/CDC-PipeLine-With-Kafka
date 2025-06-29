@@ -539,7 +539,7 @@ graph TB
 #### 크롤링 & 분석
 - **Crawl4AI**: Python 기반 지능형 웹 크롤러
 - **Docker**: 컨테이너 기반 배포
-- **자체 NLP 엔진**: Java 기반 키워드 추출
+- **자체 NLP 엔진**: Python 기반 키워드 추출
 
 #### 모니터링 & 관측성
 - **Prometheus**: 메트릭 수집 및 저장
