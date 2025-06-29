@@ -1,0 +1,16 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+# Kafka Consumer
+aiokafka==0.12.0
+# 키워드 추출 (하이브리드)
+keybert==0.8.3
+sentence-transformers==2.2.2
+transformers==4.35.2
+torch==2.1.1
+openai==1.3.7
+# Redis (트렌드 분석)
+redis[hiredis]==5.0.1
+# 수치 계산
+numpy==1.24.4
+scikit-learn==1.3.2

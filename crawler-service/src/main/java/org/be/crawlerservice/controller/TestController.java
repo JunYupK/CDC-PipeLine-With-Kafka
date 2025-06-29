@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
@@ -38,157 +39,191 @@ public class TestController {
     private final ObjectMapper objectMapper;
     private final CrawlerService crawlerService;
     private final RestTemplate restTemplate;
+    private final Semaphore crawlingSemaphore = new Semaphore(4); // 최대 4개 동시 실행
+    private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(6); // 카테고리별 처리용
+    private final ScheduledExecutorService resourceMonitor = Executors.newSingleThreadScheduledExecutor();
 
-    /**
-     * Crawl4AI 서버 헬스 체크
-     */
-    @GetMapping("/health")
-    public ResponseEntity<Map<String, Object>> testHealth() {
-        try {
-            boolean healthy = crawl4AIClient.isHealthy();
 
-            Map<String, Object> response = new HashMap<>();
-            response.put("crawl4ai_healthy", healthy);
-            response.put("message", healthy ? "Crawl4AI 서버 정상" : "Crawl4AI 서버 오류");
 
-            return ResponseEntity.ok(response);
+    @PostMapping("/schema-extraction-test")
+    public void testSchemaExtraction() {
+        try{
+            String []startUrls = {"https://m.sports.naver.com/basketball/index","https://m.sports.naver.com/basketball/index"};
+            long categoryStartTime = System.currentTimeMillis();
+            for(int i=0;i<2;i++){
+                String startUrl = startUrls[i];
+                CompletableFuture<Void> task = CompletableFuture.runAsync(() -> {
+                    crawlingSemaphore.tryAcquire();
+                    try {
+                        log.info("🏃‍♂️ [{}] 병렬 딥크롤링 시작");
+                        CompletableFuture<List<Crawl4AIResult>> crawlResults =
+                                crawl4AIClient.crawlBFSAsync(startUrl, 1, 10,  NaverNewsSchemas.getSportsNewsSchema());
+                        List<Crawl4AIResult> results = crawlResults.get(20, TimeUnit.MINUTES);
+                        System.out.println(results.size());
+                        for (Crawl4AIResult result : results) {
+                            if (result == null) continue;
+                            String extracted = result.getResult().getExtractedContent();
+                            if (extracted == null || extracted.trim().isEmpty()) {
+                                continue;
+                            }
+
+                            JsonNode extractedJson = objectMapper.readTree(extracted);
+                            String link = result.getResult().getUrl();
+
+                            for (JsonNode articleNode : extractedJson) {
+                                try {
+                                    String title = getTextValue(articleNode, "title");
+                                    String content = getTextValue(articleNode, "content");
+                                    String author = getTextValue(articleNode, "author");
+                                    System.out.println(link);
+                                    System.out.println(title);
+
+                                    if (title == null || content == null) {
+                                        continue;
+                                    }
+
+
+
+                                    // 기자 이름 처리
+                                    if (author != null && author.contains(" ")) {
+                                        author = author.split(" ")[0];
+                                    }
+
+
+                                } catch (Exception e) {
+                                    log.warn("❌ [{}] 개별 기사 처리 중 오류: {}",e.getMessage());
+                                }
+                            }
+                        }
+                        long categoryDuration = System.currentTimeMillis() - categoryStartTime;
+                        log.info("✅ [{}] 병렬 딥크롤링 완료 ({}ms)", categoryDuration);
+                    }catch (Exception e){
+                        log.error("❌ [{}] 병렬 딥크롤링 중 오류", e);
+                    }finally {
+                        crawlingSemaphore.release();
+                    }
+                },parallelExecutor);
+            }
+
+            long totalCycleDuration = System.currentTimeMillis() - categoryStartTime;
+            System.out.println(totalCycleDuration);
+            System.out.println("으아아악");
         } catch (Exception e) {
-            log.error("헬스체크 실패", e);
-            Map<String, Object> response = new HashMap<>();
-            response.put("crawl4ai_healthy", false);
-            response.put("error", e.getMessage());
-            return ResponseEntity.status(503).body(response);
+            throw new RuntimeException(e);
         }
     }
-    @PostMapping("/stream-deep-crawl")
-    public ResponseEntity<Map<String, Object>> testStreamDeepCrawl() {
-        try {
-            String startUrl = "https://news.naver.com/section/100";
-            Map<String, Object> results = new HashMap<>();
-            AtomicInteger processedCount = new AtomicInteger(0);
-            AtomicInteger validArticleCount = new AtomicInteger(0);
+    @PostMapping("/schema-extraction-test-single")
+    public void testSchemaSingleExtraction() {
+        try{
+            String []startUrls = {"https://m.sports.naver.com/basketball/index","https://m.sports.naver.com/basketball/index"};
+            long cycleStartTime = System.currentTimeMillis();
+            for(int i=0;i<2;i++){
+                String startUrl = startUrls[i];
+                CompletableFuture<List<Crawl4AIResult>> crawlResults =
+                        crawl4AIClient.crawlBFSAsync(startUrl, 1, 10,  NaverNewsSchemas.getSportsNewsSchema());
+                List<Crawl4AIResult> results = crawlResults.get(20, TimeUnit.MINUTES);
+                System.out.println(results.size());
+                for (Crawl4AIResult result : results) {
+                    if (result == null) continue;
+                    String extracted = result.getResult().getExtractedContent();
+                    if (extracted == null || extracted.trim().isEmpty()) {
+                        continue;
+                    }
 
-            log.info("🚀 Stream BFS Deep Crawling 시작: {}", startUrl);
+                    JsonNode extractedJson = objectMapper.readTree(extracted);
+                    String link = result.getResult().getUrl();
 
-            // Stream 요청 생성
-            Map<String, Object> schema = NaverNewsSchemas.getBasicNewsSchema();
+                    for (JsonNode articleNode : extractedJson) {
+                        try {
+                            String title = getTextValue(articleNode, "title");
+                            String content = getTextValue(articleNode, "content");
+                            String author = getTextValue(articleNode, "author");
+                            System.out.println(link);
+                            System.out.println(title);
+
+                            if (title == null || content == null) {
+                                continue;
+                            }
 
 
-            Crawl4AIRequest request = Crawl4AIRequest.forBestFirstNaverNews(startUrl, 1, 10, schema);
-            String crawlUrl = crawlerProperties.getCrawl4aiUrl() + "/crawl";
-            HttpHeaders headers = createHeaders();
-            String requestJson = objectMapper.writeValueAsString(request);
-            HttpEntity<String> requestEntity = new HttpEntity<>(requestJson, headers);
 
-            ResponseEntity<String> response = restTemplate.postForEntity(crawlUrl, requestEntity, String.class);
+                            // 기자 이름 처리
+                            if (author != null && author.contains(" ")) {
+                                author = author.split(" ")[0];
+                            }
 
-//            // WebClient로 스트림 연결
-//            WebClient webClient = WebClient.builder()
-//                    .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
-//                    .build();
-//
-//            log.info("📡 스트림 연결 시작...");
-//
-//            Flux<String> streamFlux = webClient.post()
-//                    .uri(crawlUrl)
-//                    .header("Content-Type", "application/json")
-//                    .header("Authorization", "Bearer " + crawlerProperties.getApiToken())
-//                    .bodyValue(requestJson)
-//                    .retrieve()
-//                    .bodyToFlux(String.class);
-//
-//            // 실시간 스트림 처리
-//            streamFlux
-//                    .timeout(Duration.ofSeconds(120))
-//                    .doOnSubscribe(subscription -> log.info("🔗 스트림 구독 시작"))
-//                    .doOnNext(chunk -> {
-//                        int count = processedCount.incrementAndGet();
-//
-//                        // 🔥 실제 청크 내용 로깅 추가
-//                        log.info("📦 청크 {}: 크기={}bytes", count, chunk.length());
-//                        log.info("📄 청크 내용: {}", chunk);
-//
-//                        try {
-//                            // JSON 파싱 시도
-//                            if (chunk.trim().startsWith("{") || chunk.trim().startsWith("[")) {
-//                                JsonNode chunkNode = objectMapper.readTree(chunk);
-//
-//                                // 🔥 JSON 구조 로깅 추가
-//                                log.info("🔍 JSON 구조: {}", chunkNode.toPrettyString());
-//
-//                                // 배열이면 각 요소 처리
-//                                if (chunkNode.isArray()) {
-//                                    for (JsonNode item : chunkNode) {
-//                                        processArticleNode(item, validArticleCount);
-//                                    }
-//                                } else {
-//                                    processArticleNode(chunkNode, validArticleCount);
-//                                }
-//                            } else {
-//                                log.warn("⚠️ JSON이 아닌 청크: {}", chunk.substring(0, Math.min(chunk.length(), 200)));
-//                            }
-//
-//                        } catch (Exception e) {
-//                            log.warn("⚠️ 청크 파싱 실패: {} - 청크: {}", e.getMessage(),
-//                                    chunk.substring(0, Math.min(chunk.length(), 200)));
-//                        }
-//                    })
-//                    .doOnComplete(() -> {
-//                        log.info("✅ 스트림 완료 - 총 청크: {}, 유효 기사: {}",
-//                                processedCount.get(), validArticleCount.get());
-//                    })
-//                    .doOnError(error -> log.error("❌ 스트림 오류", error))
-//                    .blockLast();
-//
-//            results.put("stream_completed", true);
-//            results.put("total_chunks", processedCount.get());
-//            results.put("valid_articles", validArticleCount.get());
 
-            return ResponseEntity.ok(results);
-
-        } catch (Exception e) {
-            log.error("❌ Stream Deep Crawling 실패", e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage()
-            ));
-        }
-    }
-
-    private void processArticleNode(JsonNode node, AtomicInteger validCount) {
-        try {
-            // 🔥 더 많은 필드 체크
-            String title = getTextValue(node, "title");
-            String link = getTextValue(node, "link");
-            String url = getTextValue(node, "url");
-            String content = getTextValue(node, "content");
-
-            log.debug("🔍 노드 분석 - title: {}, link: {}, url: {}, content: {}",
-                    title != null ? "있음" : "없음",
-                    link != null ? "있음" : "없음",
-                    url != null ? "있음" : "없음",
-                    content != null ? "있음" : "없음");
-
-            // title과 link가 모두 있는 경우만 출력
-            if (title != null && !title.trim().isEmpty() &&
-                    (link != null || url != null)) {
-
-                int count = validCount.incrementAndGet();
-                String finalLink = link != null ? link : url;
-
-                log.info("📰 기사 {}: {}", count, title);
-                log.info("🔗 링크: {}", finalLink);
-                log.info("---");
-
-                if (content != null && !content.trim().isEmpty()) {
-                    log.debug("📄 내용 미리보기: {}...",
-                            content.substring(0, Math.min(content.length(), 100)));
+                        } catch (Exception e) {
+                            log.warn("❌ [{}] 개별 기사 처리 중 오류: {}",e.getMessage());
+                        }
+                    }
                 }
             }
 
+            long totalCycleDuration = System.currentTimeMillis() - cycleStartTime;
+
+            System.out.println(totalCycleDuration);
         } catch (Exception e) {
-            log.warn("노드 처리 중 오류: {}", e.getMessage());
+            throw new RuntimeException(e);
         }
+    }
+    private boolean testSchema(String url, Map<String, Object> schema, String schemaName) {
+        try {
+            Crawl4AIRequest request = Crawl4AIRequest.forArticleContent(url, schema);
+            Crawl4AIResult result = crawl4AIClient.crawl(request, false);
+
+            if (result != null && result.getResult() != null) {
+                String extracted = result.getResult().getExtractedContent();
+
+                if (extracted != null && !extracted.trim().isEmpty() && !extracted.equals("[]")) {
+                    JsonNode node = objectMapper.readTree(extracted);
+                    if (node.isArray() && node.size() > 0) {
+                        JsonNode article = node.get(0);
+                        String title = getTextValue(article, "title");
+                        String content = getTextValue(article, "content");
+
+                        boolean hasValidContent = title != null && content != null &&
+                                !title.trim().isEmpty() && !content.trim().isEmpty();
+
+                        log.info("✅ [{}] 성공: title={}, content={}",
+                                schemaName, title != null ? "O" : "X", content != null ? "O" : "X");
+                        return hasValidContent;
+                    }
+                }
+            }
+
+            log.warn("❌ [{}] 실패: 추출 데이터 없음", schemaName);
+            return false;
+
+        } catch (Exception e) {
+            log.warn("❌ [{}] 오류: {}", schemaName, e.getMessage());
+            return false;
+        }
+    }
+
+    // 개선된 범용 스키마
+    private Map<String, Object> getImprovedUniversalSchema() {
+        return Map.of(
+                "name", "ImprovedUniversal",
+                "baseSelector", "body",
+                "fields", List.of(
+                        Map.of(
+                                "name", "title",
+                                "selector", "#title_area span, .ArticleHead_article_head_title__YUNFf h2, .media_end_head_headline, h1, [class*='title']",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "content",
+                                "selector", "#dic_area, .ArticleContent_comp_article_content__luOFM, .media_end_body_content, #newsct_article, [class*='content']",
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "author",
+                                "selector", ".ArticleHead_journalist_wrap__nE8S_ em, .media_end_head_journalist em, [class*='author']",
+                                "type", "text"
+                        )
+                )
+        );
     }
 
     /**

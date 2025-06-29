@@ -249,6 +249,7 @@ public class Crawl4AIRequest {
                         "headless", true,
                         "viewport_width", 1920,
                         "viewport_height", 1080,
+                        "user_agent_mode", "random",
                         "text_mode", false,
                         "headers", Map.of(
                                 "Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8",
@@ -262,9 +263,10 @@ public class Crawl4AIRequest {
                 .type("CrawlerRunConfig")
                 .params(Map.of(
                         "cache_mode", "bypass",
-                        "wait_until", "networkidle",
+//                        "wait_until", "networkidle",
                         "page_timeout", 45000,  // 네이버 뉴스는 좀 더 긴 타임아웃
                         "delay_before_return_html", 2.0,
+                        "magic", true, // 안티봇 회피 모드
                         "extraction_strategy", Map.of(
                                 "type", "JsonCssExtractionStrategy",
                                 "params", Map.of("schema", schema)

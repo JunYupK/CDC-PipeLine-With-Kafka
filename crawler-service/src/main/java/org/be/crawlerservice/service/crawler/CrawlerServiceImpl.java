@@ -146,18 +146,18 @@ public class CrawlerServiceImpl implements CrawlerService {
                         // 1. 스포츠 카테고리 크롤링
                         if (isContinuousDeepCrawling.get()) {
                             long sportStartTime = System.currentTimeMillis(); // 📊 추가
-                            crawlSportCategoriesDeep(2, 150);
+                            crawlSportCategoriesDeep(2, 100);
                             long sportDuration = System.currentTimeMillis() - sportStartTime; // 📊 추가
                             crawlerMetrics.recordCycleCrawlTime(currentCycle, "sports", sportDuration);
                         }
 
                         // 일반 카테고리 크롤링
-                        if (isContinuousDeepCrawling.get()) {
-                            long basicStartTime = System.currentTimeMillis(); // 📊 추가
-                            crawlBasicCategoriesDeep(2, 150);
-                            long basicDuration = System.currentTimeMillis() - basicStartTime; // 📊 추가
-                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "basic", basicDuration); // 📊 추가
-                        }
+//                        if (isContinuousDeepCrawling.get()) {
+//                            long basicStartTime = System.currentTimeMillis(); // 📊 추가
+//                            crawlBasicCategoriesDeep(2, 100);
+//                            long basicDuration = System.currentTimeMillis() - basicStartTime; // 📊 추가
+//                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "basic", basicDuration); // 📊 추가
+//                        }
 
 
                         // 3. 사이클 간 대기 시간
@@ -315,7 +315,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     // ===== BFS Deep Crawling 메서드들 =====
     private void crawlSportCategoriesDeep(int maxDepth, int maxPages) {
-        Map<String,String> categories = NaverNewsSchemas.getCategoryUrls();
+        Map<String,String> categories = NaverNewsSchemas.getSportsCategoryUrls();
         List<CompletableFuture<Void>> categoryTasks = new ArrayList<>();
 
         categories.entrySet().forEach(entry -> {
@@ -401,7 +401,7 @@ public class CrawlerServiceImpl implements CrawlerService {
     /**
      * 🔧 개별 카테고리 처리 (공통 로직)
      */
-    private void processCategoryDeep(String category, String startUrl, Map<String, Object> schema,
+    public void processCategoryDeep(String category, String startUrl, Map<String, Object> schema,
                                      int maxDepth, int maxPages) {
         int savedCount = 0;
         int duplicateCount = 0;
@@ -414,7 +414,7 @@ public class CrawlerServiceImpl implements CrawlerService {
             CompletableFuture<List<Crawl4AIResult>> crawlResults =
                     crawl4AIClient.crawlBFSAsync(startUrl, maxDepth, maxPages, schema);
 
-            List<Crawl4AIResult> results = crawlResults.get(5, TimeUnit.MINUTES); // 5분 타임아웃
+            List<Crawl4AIResult> results = crawlResults.get(20, TimeUnit.MINUTES); // 5분 타임아웃
 
             for (Crawl4AIResult result : results) {
                 if (result == null) continue;
