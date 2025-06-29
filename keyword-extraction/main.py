@@ -1,21 +1,29 @@
-# main.py - 통합 키워드 추출 서비스
-import asyncio
+# main.py - 안정적인 키워드 추출 서비스 (confluent_kafka 사용)
+import os
 import json
 import logging
-from datetime import datetime
+import threading
+import time
 from typing import List, Dict, Optional, Set
+from datetime import datetime
+import asyncio
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from aiokafka import AIOKafkaConsumer
+from confluent_kafka import Consumer, KafkaError, KafkaException
 
 from hybrid_keyword_extractor import HybridKeywordExtractor
 from advanced_trend_analyzer import AdvancedTrendAnalyzer, TrendMetrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 환경변수에서 Kafka 설정 읽기
+KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
+KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'postgres.public.articles')
+KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'keyword-extraction-service-v3')
 
 # === 모델 정의 ===
 class KeywordRequest(BaseModel):
@@ -59,106 +67,278 @@ class WebSocketManager:
         # 끊어진 연결 정리
         self.active_connections -= disconnected
 
-class KafkaArticleConsumer:
+class KafkaCDCEventHandler:
+    """CDC 이벤트 처리 클래스"""
+    
     def __init__(self, extractor: HybridKeywordExtractor, analyzer: AdvancedTrendAnalyzer, websocket_manager: WebSocketManager):
         self.extractor = extractor
         self.analyzer = analyzer
         self.websocket_manager = websocket_manager
-        self.consumer = None
-        self.running = False
         self.processed_count = 0
         
-    async def start_consuming(self):
-        """Kafka Consumer 시작"""
-        self.running = True
-        
+    def process_event(self, event: Dict) -> bool:
+        """CDC 이벤트 동기 처리"""
         try:
-            self.consumer = AIOKafkaConsumer(
-                'postgres.public.articles',
-                bootstrap_servers='localhost:9092',
-                group_id='keyword-extraction-service',
-                auto_offset_reset='latest',
-                value_deserializer=lambda m: json.loads(m.decode('utf-8'))
-            )
-            
-            await self.consumer.start()
-            logger.info("📡 Kafka Consumer 시작 완료")
-            
-            async for message in self.consumer:
-                if not self.running:
-                    break
-                await self._process_cdc_event(message.value)
+            # 이벤트 구조 확인
+            payload = event.get('payload', event)
+            if not payload:
+                return False
                 
-        except Exception as e:
-            logger.error(f"❌ Kafka Consumer 오류: {e}")
-        finally:
-            if self.consumer:
-                await self.consumer.stop()
-    
-    async def _process_cdc_event(self, event_data: Dict):
-        """CDC 이벤트 처리"""
-        try:
-            if event_data.get('op') != 'c':
-                return
+            # 작업 유형 확인 (create, update만 처리)
+            operation = payload.get('op')
+            if operation not in ('c', 'r', 'u'):
+                return True
                 
-            article_data = event_data.get('after', {})
-            if not article_data or article_data.get('keywords'):
-                return
+            # 기사 데이터 추출
+            article_data = payload.get('after', {})
+            if not article_data or not article_data.get('id'):
+                return False
                 
-            article_id = article_data.get('id')
             title = article_data.get('title', '')
             content = article_data.get('content', '')
             category = article_data.get('category', '')
+            article_id = article_data.get('id')
             
             if not title or not content or len(content) < 50:
-                return
+                logger.debug(f"기사 내용 부족: {article_id}")
+                return True
                 
-            logger.info(f"📄 기사 처리 시작: {article_id}")
+            logger.info(f"🔥 기사 처리 시작: {article_id} - {title[:50]}")
             
-            # 하이브리드 키워드 추출
-            metadata = {
-                'views_count': article_data.get('views_count', 0),
-                'category': category,
-                'article_id': article_id
-            }
-            
-            keywords = await self.extractor.extract_keywords(title, content, metadata)
-            
-            if keywords:
-                # 고도화된 트렌드 분석에 추가
-                await self.analyzer.add_keywords(keywords, category, metadata)
+            # 🔧 동기 방식으로 키워드 추출 (asyncio.run 사용)
+            try:
+                keywords = asyncio.run(self._extract_keywords_sync(title, content, category, article_id))
                 
-                self.processed_count += 1
+                if keywords:
+                    self.processed_count += 1
+                    
+                    # 비동기 작업을 별도 스레드에서 실행
+                    threading.Thread(
+                        target=self._handle_async_tasks,
+                        args=(article_id, title, category, keywords)
+                    ).start()
+                    
+                    logger.info(f"✅ 키워드 추출 완료: {len(keywords)}개 - {keywords[:5]}")
+                else:
+                    logger.warning(f"⚠️ 키워드 추출 실패: {article_id}")
+                    
+            except Exception as e:
+                logger.error(f"❌ 키워드 추출 중 오류: {e}")
+                return False
                 
-                # WebSocket으로 실시간 전송
-                await self._broadcast_new_keywords(article_id, title, category, keywords)
-                
-                logger.info(f"✅ 키워드 추출 완료: {keywords}")
+            return True
             
         except Exception as e:
-            logger.error(f"CDC 이벤트 처리 오류: {e}")
+            logger.error(f"❌ 이벤트 처리 중 오류: {e}", exc_info=True)
+            return False
     
-    async def _broadcast_new_keywords(self, article_id: int, title: str, category: str, keywords: List[str]):
-        """새 키워드 WebSocket 브로드캐스트"""
-        message = {
-            "type": "new_keywords",
-            "data": {
-                "article_id": article_id,
-                "title": title,
-                "category": category,
-                "keywords": keywords,
-                "timestamp": datetime.now().isoformat()
-            }
+    async def _extract_keywords_sync(self, title: str, content: str, category: str, article_id: int):
+        """키워드 추출 (비동기)"""
+        metadata = {
+            'category': category,
+            'article_id': article_id
         }
-        await self.websocket_manager.broadcast(message)
+        
+        return await self.extractor.extract_keywords(title, content, metadata)
     
-    async def stop(self):
+    def _handle_async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
+        """비동기 작업들을 별도 스레드에서 처리"""
+        try:
+            # 새 이벤트 루프 생성
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 비동기 작업 실행
+            loop.run_until_complete(self._async_tasks(article_id, title, category, keywords))
+            
+        except Exception as e:
+            logger.error(f"비동기 작업 처리 오류: {e}")
+        finally:
+            loop.close()
+    
+    async def _async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
+        """실제 비동기 작업들"""
+        try:
+            # 트렌드 분석에 키워드 추가
+            metadata = {'article_id': article_id}
+            await self.analyzer.add_keywords(keywords, category, metadata)
+            
+            # WebSocket 브로드캐스트
+            message = {
+                "type": "new_keywords",
+                "data": {
+                    "article_id": article_id,
+                    "title": title,
+                    "category": category,
+                    "keywords": keywords,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+            await self.websocket_manager.broadcast(message)
+            
+        except Exception as e:
+            logger.error(f"비동기 작업 실행 오류: {e}")
+
+class StableKafkaConsumer:
+    """디버깅이 강화된 Kafka Consumer"""
+    
+    def __init__(self, event_handler: KafkaCDCEventHandler):
+        self.event_handler = event_handler
         self.running = False
-        if self.consumer:
-            await self.consumer.stop()
+        self.consumer = None
+        self.worker_thread = None
+        
+        # 🔥 디버깅을 위한 설정 변경
+        self.kafka_config = {
+            'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
+            'group.id': KAFKA_GROUP_ID,
+            'auto.offset.reset': 'earliest',  # 처음부터 읽기
+            'enable.auto.commit': True,
+            'auto.commit.interval.ms': 1000,
+            'max.poll.interval.ms': 300000,
+            'session.timeout.ms': 30000,
+            'heartbeat.interval.ms': 3000,
+            'debug': 'consumer,cgrp,topic,fetch',  # 🔥 디버깅 활성화
+        }
+        
+        self.topics = [KAFKA_TOPIC]
+        
+    def start(self):
+        """Consumer 시작"""
+        if self.running:
+            logger.warning("이미 실행 중인 Consumer가 있습니다")
+            return
+            
+        self.running = True
+        self.worker_thread = threading.Thread(target=self._consume_loop)
+        self.worker_thread.daemon = True
+        self.worker_thread.start()
+        logger.info(f"🚀 Kafka Consumer 시작: {KAFKA_BOOTSTRAP_SERVERS}")
+        
+    def stop(self):
+        """Consumer 중지"""
+        self.running = False
+        if self.worker_thread:
+            logger.info("Kafka Consumer 중지 중...")
+            self.worker_thread.join(timeout=30)
+            logger.info("Kafka Consumer 중지 완료")
+            
+    def _consume_loop(self):
+        """메시지 소비 루프 (디버깅 강화)"""
+        try:
+            logger.info(f"🔧 Kafka 설정: {self.kafka_config}")
+            
+            self.consumer = Consumer(self.kafka_config)
+            self.consumer.subscribe(self.topics)
+            logger.info(f"📡 토픽 구독 완료: {self.topics}")
+            
+            # 🔥 Consumer 메타데이터 확인
+            metadata = self.consumer.list_topics(timeout=10)
+            logger.info(f"📊 사용 가능한 토픽: {list(metadata.topics.keys())}")
+            
+            if KAFKA_TOPIC in metadata.topics:
+                topic_metadata = metadata.topics[KAFKA_TOPIC]
+                logger.info(f"📍 토픽 '{KAFKA_TOPIC}' 파티션 수: {len(topic_metadata.partitions)}")
+            else:
+                logger.error(f"❌ 토픽 '{KAFKA_TOPIC}'을 찾을 수 없습니다!")
+                return
+            
+            message_count = 0
+            poll_count = 0
+            
+            while self.running:
+                try:
+                    poll_count += 1
+                    
+                    # 🔥 메시지 폴링 (더 긴 타임아웃)
+                    msg = self.consumer.poll(timeout=5.0)
+                    
+                    # 🔥 폴링 상태 로깅 (매 10번마다)
+                    if poll_count % 10 == 0:
+                        logger.info(f"⏰ 폴링 #{poll_count} - 메시지: {'있음' if msg else '없음'}")
+                        
+                        # Consumer 할당 상태 확인
+                        assignment = self.consumer.assignment()
+                        logger.info(f"📍 할당된 파티션: {assignment}")
+                        
+                        # 각 파티션의 오프셋 확인
+                        for partition in assignment:
+                            try:
+                                position = self.consumer.position([partition])
+                                committed = self.consumer.committed([partition])
+                                logger.info(f"📊 파티션 {partition}: position={position}, committed={committed}")
+                            except Exception as e:
+                                logger.error(f"오프셋 확인 실패: {e}")
+                    
+                    if msg is None:
+                        continue
+                        
+                    if msg.error():
+                        if msg.error().code() == KafkaError._PARTITION_EOF:
+                            logger.debug(f"파티션 끝 도달: {msg.topic()}-{msg.partition()}")
+                        else:
+                            logger.error(f"Kafka 오류: {msg.error()}")
+                        continue
+                    
+                    # 🔥 메시지 수신 로깅 강화
+                    message_count += 1
+                    logger.info(f"🔥📨 메시지 #{message_count} 수신!")
+                    logger.info(f"  ├─ 토픽: {msg.topic()}")
+                    logger.info(f"  ├─ 파티션: {msg.partition()}")
+                    logger.info(f"  ├─ 오프셋: {msg.offset()}")
+                    logger.info(f"  └─ 크기: {len(msg.value())} bytes")
+                    
+                    # 🔥 메시지 내용 미리보기
+                    try:
+                        value = msg.value()
+                        if value:
+                            preview = value.decode('utf-8')[:200]
+                            logger.info(f"📄 내용 미리보기: {preview}...")
+                            
+                            event = json.loads(value.decode('utf-8'))
+                            
+                            # 🔥 이벤트 구조 로깅
+                            payload = event.get('payload', {})
+                            op = payload.get('op', 'unknown')
+                            after = payload.get('after', {})
+                            article_id = after.get('id', 'unknown')
+                            title = after.get('title', 'unknown')[:30]
+                            
+                            logger.info(f"🔍 이벤트 분석:")
+                            logger.info(f"  ├─ 작업: {op}")
+                            logger.info(f"  ├─ 기사 ID: {article_id}")
+                            logger.info(f"  └─ 제목: {title}...")
+                            
+                            # 이벤트 처리
+                            success = self.event_handler.process_event(event)
+                            logger.info(f"{'✅' if success else '❌'} 이벤트 처리 {'성공' if success else '실패'}")
+                                
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON 파싱 오류: {e}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"메시지 처리 오류: {e}", exc_info=True)
+                        continue
+                        
+                except KafkaException as e:
+                    logger.error(f"Kafka 예외: {e}")
+                    time.sleep(5)
+                except Exception as e:
+                    logger.error(f"예상치 못한 오류: {e}", exc_info=True)
+                    time.sleep(1)
+                    
+        except Exception as e:
+            logger.error(f"Consumer 루프 치명적 오류: {e}", exc_info=True)
+        finally:
+            if self.consumer:
+                try:
+                    self.consumer.close()
+                except Exception as e:
+                    logger.error(f"Consumer 종료 오류: {e}")
+
 
 # === FastAPI 앱 ===
-app = FastAPI(title="고도화된 키워드 추출 서비스", version="2.0.0")
+app = FastAPI(title="안정적인 키워드 추출 서비스", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -169,48 +349,74 @@ app.add_middleware(
 )
 
 # 전역 인스턴스
-extractor = HybridKeywordExtractor()  # OpenAI API 키가 있으면 추가
+extractor = HybridKeywordExtractor()
 analyzer = AdvancedTrendAnalyzer()
 websocket_manager = WebSocketManager()
-kafka_consumer = KafkaArticleConsumer(extractor, analyzer, websocket_manager)
-
+event_handler = KafkaCDCEventHandler(extractor, analyzer, websocket_manager)
+kafka_consumer = StableKafkaConsumer(event_handler)
+# 🔥 추가: Consumer 그룹 리셋 함수
+def reset_consumer_group():
+    """Consumer 그룹 오프셋 리셋"""
+    try:
+        from confluent_kafka.admin import AdminClient, ConfigResource
+        
+        admin_client = AdminClient({
+            'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS
+        })
+        
+        # Consumer 그룹 정보 확인
+        logger.info(f"🔧 Consumer 그룹 '{KAFKA_GROUP_ID}' 리셋 시도")
+        
+        # 새로운 Consumer로 오프셋 리셋
+        reset_consumer = Consumer({
+            'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
+            'group.id': KAFKA_GROUP_ID + '-reset',
+            'auto.offset.reset': 'earliest'
+        })
+        
+        reset_consumer.subscribe([KAFKA_TOPIC])
+        
+        # 파티션 할당 대기
+        msg = reset_consumer.poll(timeout=10.0)
+        assignment = reset_consumer.assignment()
+        
+        if assignment:
+            logger.info(f"📍 리셋용 파티션 할당: {assignment}")
+            
+            # 각 파티션의 시작 오프셋으로 이동
+            for partition in assignment:
+                low, high = reset_consumer.get_watermark_offsets(partition, timeout=10.0)
+                logger.info(f"📊 파티션 {partition}: low={low}, high={high}")
+        
+        reset_consumer.close()
+        logger.info("✅ Consumer 그룹 리셋 완료")
+        
+    except Exception as e:
+        logger.error(f"❌ Consumer 그룹 리셋 실패: {e}")
+# main.py의 startup 함수에 추가
 @app.on_event("startup")
 async def startup():
     """서비스 시작시 초기화"""
+    logger.info("🚀 키워드 추출 서비스 초기화 시작")
+    
+    # 🔥 Consumer 그룹 리셋 (필요시)
+    reset_consumer_group()
+    
+    # 서비스 초기화
     await extractor.initialize()
-    await analyzer.initialize()
+    await analyzer.initialize(redis_url="redis://:homesweethome@localhost:6379")
     
-    # Kafka Consumer와 Redis 알림 구독 시작
-    asyncio.create_task(kafka_consumer.start_consuming())
-    asyncio.create_task(redis_alert_subscriber())
+    # Kafka Consumer 시작
+    kafka_consumer.start()
     
-    logger.info("🚀 고도화된 키워드 추출 서비스 시작 완료")
+    logger.info("✅ 키워드 추출 서비스 시작 완료")
 
 @app.on_event("shutdown")
 async def shutdown():
-    await kafka_consumer.stop()
-
-async def redis_alert_subscriber():
-    """Redis 알림 채널 구독 (WebSocket 브로드캐스트용)"""
-    import redis.asyncio as redis
-    
-    try:
-        redis_client = redis.from_url("redis://localhost:6379")
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe("alert_channel")
-        
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                alert_data = json.loads(message["data"])
-                
-                # WebSocket으로 알림 브로드캐스트
-                await websocket_manager.broadcast({
-                    "type": "alert",
-                    "data": alert_data
-                })
-                
-    except Exception as e:
-        logger.error(f"Redis 알림 구독 오류: {e}")
+    """서비스 종료"""
+    logger.info("🛑 서비스 종료 중...")
+    kafka_consumer.stop()
+    logger.info("✅ 서비스 종료 완료")
 
 @app.websocket("/ws/keywords")
 async def websocket_endpoint(websocket: WebSocket):
@@ -271,7 +477,7 @@ async def get_trending_keywords_advanced(limit: int = 20):
 
 @app.get("/keyword-timeline/{keyword}")
 async def get_keyword_timeline(keyword: str, hours: int = 24):
-    """키워드 시간별 데이터 (차트용)"""
+    """키워드 시간별 데이터"""
     timeline = await analyzer.get_timeline_data(keyword, hours)
     return {"keyword": keyword, "timeline": timeline}
 
@@ -287,9 +493,10 @@ async def get_service_stats():
     extraction_stats = extractor.get_extraction_stats()
     
     return {
-        "processed_articles": kafka_consumer.processed_count,
+        "processed_articles": event_handler.processed_count,
         "active_websockets": len(websocket_manager.active_connections),
         "extraction_stats": extraction_stats,
+        "kafka_running": kafka_consumer.running,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -317,6 +524,7 @@ async def manual_extract_keywords(request: KeywordRequest):
 
 @app.get("/health")
 async def health_check():
+    """헬스 체크"""
     try:
         await analyzer.redis_client.ping()
         redis_status = True
@@ -324,14 +532,31 @@ async def health_check():
         redis_status = False
     
     return {
-        "status": "healthy" if redis_status else "degraded",
+        "status": "healthy" if (redis_status and kafka_consumer.running) else "degraded",
         "services": {
             "redis": redis_status,
             "kafka_consumer": kafka_consumer.running,
             "websocket_connections": len(websocket_manager.active_connections)
         },
-        "processed_count": kafka_consumer.processed_count
+        "kafka_config": {
+            "bootstrap_servers": KAFKA_BOOTSTRAP_SERVERS,
+            "topic": KAFKA_TOPIC,
+            "group_id": KAFKA_GROUP_ID
+        },
+        "processed_count": event_handler.processed_count
+    }
+
+# 🔥 디버깅용 엔드포인트 추가
+@app.get("/debug/kafka-status")
+async def debug_kafka_status():
+    """Kafka 상태 디버깅"""
+    return {
+        "consumer_running": kafka_consumer.running,
+        "worker_thread_alive": kafka_consumer.worker_thread.is_alive() if kafka_consumer.worker_thread else False,
+        "processed_messages": event_handler.processed_count,
+        "config": kafka_consumer.kafka_config,
+        "topics": kafka_consumer.topics
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)  # reload=False로 설정
