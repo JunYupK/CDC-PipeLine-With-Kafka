@@ -6,6 +6,7 @@ import threading
 import time
 from typing import List, Dict, Optional, Set
 from datetime import datetime
+from dotenv import load_dotenv
 import asyncio
 
 import uvicorn
@@ -20,11 +21,15 @@ from advanced_trend_analyzer import AdvancedTrendAnalyzer, TrendMetrics
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+load_dotenv()
 # 환경변수에서 Kafka 설정 읽기
-KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'postgres.public.articles')
-KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'keyword-extraction-service-v3')
+KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS')
+KAFKA_TOPIC = os.getenv('KAFKA_TOPIC')
+KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID')
 
+print(f"Kafka: {KAFKA_BOOTSTRAP_SERVERS}")
+print(f"Topic: {KAFKA_TOPIC}")
+print(f"Group: {KAFKA_GROUP_ID}")
 # === 모델 정의 ===
 class KeywordRequest(BaseModel):
     title: str
@@ -192,13 +197,13 @@ class StableKafkaConsumer:
         self.kafka_config = {
             'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
             'group.id': KAFKA_GROUP_ID,
-            'auto.offset.reset': 'earliest',  # 처음부터 읽기
+            'auto.offset.reset': 'latest',  # 처음부터 읽기
             'enable.auto.commit': True,
             'auto.commit.interval.ms': 1000,
             'max.poll.interval.ms': 300000,
             'session.timeout.ms': 30000,
             'heartbeat.interval.ms': 3000,
-            'debug': 'consumer,cgrp,topic,fetch',  # 🔥 디버깅 활성화
+            # 'debug': 'consumer,cgrp,topic,fetch',  # 🔥 디버깅 활성화
         }
         
         self.topics = [KAFKA_TOPIC]
@@ -259,7 +264,8 @@ class StableKafkaConsumer:
                         
                         # Consumer 할당 상태 확인
                         assignment = self.consumer.assignment()
-                        logger.info(f"📍 할당된 파티션: {assignment}")
+                        for partition in assignment:
+                            logger.info(f"📍 파티션: {partition.topic}[{partition.partition}] offset={partition.offset}")
                         
                         # 각 파티션의 오프셋 확인
                         for partition in assignment:

@@ -132,11 +132,14 @@ class AdvancedTrendAnalyzer:
             total_count = 0
             
             # 현재 시간부터 윈도우만큼 역산
-            for i in range(window_hours):
+            for i in range(min(window_hours, 24)):  # 최대 24시간으로 제한
                 hour_time = current_time - timedelta(hours=i)
                 window_key = f"keywords:{window_hours}h:{hour_time.strftime('%Y%m%d%H')}"
-                count = await self.redis_client.zscore(window_key, keyword) or 0
-                total_count += int(count)
+                try:
+                    count = await self.redis_client.zscore(window_key, keyword) or 0
+                    total_count += int(count)
+                except:
+                    continue
             
             counts[f"{window_hours}h"] = total_count
         
@@ -278,13 +281,24 @@ class AdvancedTrendAnalyzer:
     
     async def get_trending_keywords_advanced(self, limit: int = 20) -> List[TrendMetrics]:
         """고도화된 트렌딩 키워드 조회"""
+        try:
+            # Redis 연결 확인
+            await self.redis_client.ping()
+        except:
+            # 재연결 시도
+            await self.initialize(redis_url="redis://:homesweethome@localhost:6379")
+        
         # 상위 키워드 후보 조회 (더 많이 가져와서 필터링)
         candidates = await self.redis_client.zrevrange("trending_keywords", 0, limit * 2, withscores=True)
         
         trending_metrics = []
         for keyword, _ in candidates:
-            metrics = await self.calculate_trend_metrics(keyword)
-            trending_metrics.append(metrics)
+            try:
+                metrics = await self.calculate_trend_metrics(keyword)
+                trending_metrics.append(metrics)
+            except Exception as e:
+                logger.error(f"키워드 {keyword} 메트릭 계산 실패: {e}")
+                continue
         
         # 종합 점수로 정렬
         trending_metrics.sort(key=lambda x: x.compound_score, reverse=True)
