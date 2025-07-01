@@ -23,47 +23,107 @@ const WordCloudDashboard = () => {
   const d3Container = useRef(null);
   const wsRef = useRef(null);
 
-  // WebSocket 연결
   useEffect(() => {
+    let isMounted = true;
+    let reconnectTimer = null;
+    
     const connectWebSocket = () => {
+      // 컴포넌트가 언마운트되었으면 연결하지 않음
+      if (!isMounted) return;
+      
+      // 기존 연결이 있으면 정리
+      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+        wsRef.current.close(1000, 'Reconnecting');
+      }
+      
+      console.log('WebSocket 연결 시도...');
       const ws = new WebSocket('ws://localhost:8001/ws/keywords');
       wsRef.current = ws;
       
       ws.onopen = () => {
+        if (!isMounted) {
+          ws.close();
+          return;
+        }
         setConnectionStatus('connected');
-        console.log('WebSocket connected');
+        console.log('WebSocket 연결 성공');
+        
+        // 연결 확인을 위한 핑 전송
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
       };
       
       ws.onmessage = (event) => {
-        if (isPaused) return;
+        if (!isMounted) return;
         
-        const data = JSON.parse(event.data);
-        handleWebSocketMessage(data);
+        try {
+          const data = JSON.parse(event.data);
+          
+          // 핑 메시지는 퐁으로 응답
+          if (data.type === 'ping') {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'pong' }));
+            }
+            return;
+          }
+          
+          if (!isPaused) {
+            handleWebSocketMessage(data);
+          }
+        } catch (error) {
+          console.error('메시지 파싱 오류:', error);
+        }
       };
       
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setConnectionStatus('error');
+        console.error('WebSocket 오류:', error);
+        if (isMounted) {
+          setConnectionStatus('error');
+        }
       };
       
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        console.log('WebSocket 종료:', event.code, event.reason);
+        
+        if (!isMounted) return;
+        
         setConnectionStatus('disconnected');
-        setTimeout(connectWebSocket, 5000);
+        
+        // 비정상 종료인 경우에만 재연결 시도
+        if (event.code !== 1000 && event.code !== 1001) {
+          console.log('5초 후 재연결 시도...');
+          reconnectTimer = setTimeout(() => {
+            if (isMounted) {
+              connectWebSocket();
+            }
+          }, 5000);
+        }
       };
       
       setWsConnection(ws);
     };
     
+    // 초기 연결
     connectWebSocket();
     
+    // 정리 함수
     return () => {
+      isMounted = false;
+      
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      
       if (wsRef.current) {
-        wsRef.current.close();
+        console.log('WebSocket 정리 중...');
+        wsRef.current.close(1000, 'Component unmounting');
+        wsRef.current = null;
       }
     };
-  }, []);
+  }, []); // 빈 의존성 배열로 한 번만 실행
 
-  const handleWebSocketMessage = (data) => {
+  const handleWebSocketMessage = useCallback((data) => {
     switch (data.type) {
       case 'wordcloud_update':
         updateWordCloud(data.data);
@@ -80,7 +140,7 @@ const WordCloudDashboard = () => {
       default:
         break;
     }
-  };
+  }, [selectedWindow]); // 필요한 의존성만 추가
 
   const updateWordCloud = (data) => {
     if (data[selectedWindow]) {

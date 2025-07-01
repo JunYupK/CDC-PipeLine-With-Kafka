@@ -155,20 +155,44 @@ class KafkaCDCEventHandler:
     
     def _handle_async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
         """비동기 작업 처리 (별도 이벤트 루프에서)"""
+        loop = None
         try:
-            # 새로운 이벤트 루프 생성
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
+            # 현재 스레드에 이벤트 루프가 있는지 확인
             try:
-                # 비동기 작업 실행
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = None
+            except RuntimeError:
+                loop = None
+            
+            # 새로운 이벤트 루프 생성
+            if loop is None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # 비동기 작업 실행
+            try:
                 loop.run_until_complete(self._async_tasks(article_id, title, category, keywords))
-            finally:
-                # 이벤트 루프 정리
-                loop.close()
+            except Exception as e:
+                logger.error(f"비동기 작업 실행 중 오류: {e}")
                 
         except Exception as e:
             logger.error(f"비동기 작업 실행 오류: {e}")
+        finally:
+            # 이벤트 루프 안전하게 정리
+            if loop and not loop.is_closed():
+                try:
+                    # 대기 중인 태스크들 정리
+                    pending = asyncio.all_tasks(loop)
+                    if pending:
+                        for task in pending:
+                            task.cancel()
+                    
+                    # 루프 정리
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                    loop.close()
+                except Exception as cleanup_error:
+                    logger.error(f"이벤트 루프 정리 중 오류: {cleanup_error}")
     
     async def _async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
         """실제 비동기 작업들"""
@@ -457,50 +481,90 @@ async def shutdown():
     kafka_consumer.stop()
     logger.info("✅ 서비스 종료 완료")
 
-# WebSocket 엔드포인트 수정
 @app.websocket("/ws/keywords")
 async def websocket_endpoint(websocket: WebSocket):
     """실시간 키워드 WebSocket"""
     await websocket_manager.connect(websocket)
     
+    stats_task = None
     try:
         # 연결 시 현재 워드클라우드 데이터 전송
-        for window_type in ["1min", "5min", "15min"]:
-            wordcloud_data = await aggregator.get_current_wordcloud(window_type)
-            layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
-            
-            await websocket.send_text(json.dumps({
-                "type": "wordcloud_update",
-                "data": {
-                    window_type: layout
-                }
-            }, ensure_ascii=False))
+        try:
+            for window_type in ["1min", "5min", "15min"]:
+                wordcloud_data = await aggregator.get_current_wordcloud(window_type)
+                layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
+                
+                await websocket.send_text(json.dumps({
+                    "type": "wordcloud_update",
+                    "data": {
+                        window_type: layout
+                    }
+                }, ensure_ascii=False))
+        except Exception as e:
+            logger.error(f"초기 워드클라우드 데이터 전송 오류: {e}")
         
         # 현재 트렌딩 키워드 전송
-        trending = await analyzer.get_trending_keywords_advanced(10)
-        await websocket.send_text(json.dumps({
-            "type": "initial_trending",
-            "data": [
-                {
-                    "keyword": t.keyword,
-                    "count": t.count_1h,
-                    "trend": t.trend_direction,
-                    "score": t.compound_score
-                }
-                for t in trending
-            ]
-        }, ensure_ascii=False))
+        try:
+            trending = await analyzer.get_trending_keywords_advanced(10)
+            await websocket.send_text(json.dumps({
+                "type": "initial_trending",
+                "data": [
+                    {
+                        "keyword": t.keyword,
+                        "count": t.count_1h,
+                        "trend": t.trend_direction,
+                        "score": t.compound_score
+                    }
+                    for t in trending
+                ]
+            }, ensure_ascii=False))
+        except Exception as e:
+            logger.error(f"초기 트렌딩 키워드 전송 오류: {e}")
         
-        # 통계 업데이트 스트리밍
+        # 통계 업데이트 스트리밍 시작
         stats_task = asyncio.create_task(stream_stats(websocket))
         
-        # 연결 유지
-        while True:
-            await websocket.receive_text()
+        # 연결 유지 - 핑/퐁 방식으로 변경
+        try:
+            while True:
+                # 클라이언트로부터의 메시지를 기다리되, 타임아웃 설정
+                try:
+                    # 30초 타임아웃으로 메시지 대기
+                    message = await asyncio.wait_for(
+                        websocket.receive_text(), 
+                        timeout=30.0
+                    )
+                    # 메시지가 오면 단순히 로깅
+                    logger.debug(f"WebSocket 메시지 수신: {message}")
+                except asyncio.TimeoutError:
+                    # 타임아웃이 발생하면 ping 전송하여 연결 확인
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": "ping",
+                            "timestamp": datetime.now().isoformat()
+                        }))
+                    except Exception:
+                        # ping 전송 실패하면 연결이 끊어진 것으로 판단
+                        break
+                        
+        except WebSocketDisconnect:
+            logger.info("클라이언트가 WebSocket 연결을 종료했습니다")
+        except Exception as e:
+            logger.error(f"WebSocket 연결 유지 중 오류: {e}")
             
-    except WebSocketDisconnect:
-        stats_task.cancel()
+    except Exception as e:
+        logger.error(f"WebSocket 엔드포인트 오류: {e}")
+    finally:
+        # 정리 작업
+        if stats_task and not stats_task.done():
+            stats_task.cancel()
+            try:
+                await stats_task
+            except asyncio.CancelledError:
+                pass
+        
         websocket_manager.disconnect(websocket)
+        logger.info("WebSocket 연결이 정리되었습니다")
 
 @app.get("/trending-keywords-advanced")
 async def get_trending_keywords_advanced(limit: int = 20):

@@ -71,30 +71,95 @@ class RealTimeKeywordAggregator:
         await self._generate_and_broadcast()
     
     async def _generate_and_broadcast(self):
-        """워드클라우드 데이터 생성 및 브로드캐스트"""
+        """워드클라우드 데이터 생성 및 브로드캐스트 - Sliding Window 방식"""
         current_time = time.time()
         wordcloud_updates = {}
         
         for window_type, window_data in self.windows.items():
-            # 윈도우 만료 체크
-            window_duration = self._get_window_duration(window_type)
-            if current_time - window_data["start"] > window_duration:
-                await self._flush_window(window_type)
-                continue
+            # Sliding Window: 오래된 데이터만 제거, 전체 리셋 없음
+            sliding_data = self._get_sliding_window_data(window_type, current_time)
             
             # 워드클라우드 데이터 생성
-            wordcloud = self._create_wordcloud_data(
-                window_data["data"], 
-                window_type
-            )
-            wordcloud_updates[window_type] = wordcloud
+            if sliding_data:  # 데이터가 있을 때만 업데이트
+                wordcloud = self._create_wordcloud_data(sliding_data, window_type)
+                wordcloud_updates[window_type] = wordcloud
         
         # 콜백 실행 (WebSocket 브로드캐스트 등)
-        for callback in self.on_update_callbacks:
-            await callback(wordcloud_updates)
-        
-        self.stats["updates_sent"] += 1
+        if wordcloud_updates:  # 업데이트할 데이터가 있을 때만
+            for callback in self.on_update_callbacks:
+                await callback(wordcloud_updates)
+            
+            self.stats["updates_sent"] += 1
     
+    def _get_sliding_window_data(self, window_type: str, current_time: float) -> Dict[str, int]:
+        """Sliding Window 데이터 추출"""
+        window_duration = self._get_window_duration(window_type)
+        cutoff_time = current_time - window_duration
+        
+        # 시간별 키워드 데이터를 저장하도록 구조 변경 필요
+        # 현재는 단순 카운트만 있어서 시간 정보가 없음
+        # 임시 해결책: 윈도우를 더 자주 리셋하지 않고 점진적으로 감소
+        
+        window_data = self.windows[window_type]["data"]
+        
+        # 간단한 감쇠 적용 (완전 리셋 대신)
+        if current_time - self.windows[window_type]["start"] > window_duration:
+            # 데이터를 절반으로 감소 (완전 삭제 대신)
+            for keyword in list(window_data.keys()):
+                window_data[keyword] = max(1, window_data[keyword] // 2)
+                if window_data[keyword] <= 1:
+                    del window_data[keyword]
+            
+            # 시작 시간 업데이트
+            self.windows[window_type]["start"] = current_time
+        
+        return dict(window_data)
+    async def _periodic_flush(self):
+        """주기적 플러시 태스크 - 급격한 리셋 방지"""
+        while True:
+            try:
+                current_time = time.time()
+                
+                for window_type, window_data in self.windows.items():
+                    window_duration = self._get_window_duration(window_type)
+                    
+                    # 윈도우 만료 시 점진적 감소 (급격한 리셋 방지)
+                    if current_time - window_data["start"] >= window_duration * 1.5:  # 1.5배 후에 감소
+                        await self._gradual_decay(window_type)
+                    
+                    # Redis 저장은 그대로 유지
+                    if len(window_data["data"]) > 100:  # 데이터가 많을 때만 저장
+                        await self._save_to_redis(window_type)
+                
+                # 30초마다 체크 (더 자주)
+                await asyncio.sleep(30)
+                
+            except Exception as e:
+                logger.error(f"주기적 플러시 오류: {e}")
+                await asyncio.sleep(30)
+    
+    async def _gradual_decay(self, window_type: str):
+        """점진적 데이터 감소"""
+        window_data = self.windows[window_type]
+        
+        # 카운트가 낮은 키워드부터 제거
+        sorted_keywords = sorted(
+            window_data["data"].items(), 
+            key=lambda x: x[1]
+        )
+        
+        # 하위 30% 키워드 제거
+        remove_count = len(sorted_keywords) // 3
+        for keyword, _ in sorted_keywords[:remove_count]:
+            del window_data["data"][keyword]
+        
+        # 나머지 키워드는 카운트 감소
+        for keyword in window_data["data"]:
+            window_data["data"][keyword] = max(1, window_data["data"][keyword] - 1)
+        
+        window_data["start"] = time.time()
+        logger.info(f"✅ {window_type} 윈도우 점진적 감소 완료")
+
     def _create_wordcloud_data(self, keyword_counts: Dict[str, int], 
                               window_type: str) -> WordCloudData:
         """워드클라우드 데이터 생성"""
@@ -149,26 +214,6 @@ class RealTimeKeywordAggregator:
         window_data["data"].clear()
         window_data["start"] = time.time()
     
-    async def _periodic_flush(self):
-        """주기적 플러시 태스크"""
-        while True:
-            try:
-                current_time = time.time()
-                
-                for window_type, window_data in self.windows.items():
-                    window_duration = self._get_window_duration(window_type)
-                    
-                    # 윈도우 만료 확인
-                    if current_time - window_data["start"] >= window_duration:
-                        await self._flush_window(window_type)
-                
-                # 1분마다 체크
-                await asyncio.sleep(60)
-                
-            except Exception as e:
-                logger.error(f"주기적 플러시 오류: {e}")
-                await asyncio.sleep(60)
-    
     async def get_current_wordcloud(self, window_type: str = "5min") -> WordCloudData:
         """현재 워드클라우드 데이터 조회"""
         if window_type not in self.windows:
@@ -199,7 +244,24 @@ class RealTimeKeywordAggregator:
                 })
         
         return historical
-    
+    async def _save_to_redis(self, window_type: str):
+        """Redis에 데이터 저장"""
+        window_data = self.windows[window_type]
+        
+        if window_data["data"]:
+            timestamp = datetime.now().strftime("%Y%m%d%H%M")
+            redis_key = f"keywords:{window_type}:{timestamp}"
+            
+            # Redis sorted set에 저장
+            pipeline = self.redis_client.pipeline()
+            for keyword, count in window_data["data"].items():
+                pipeline.zadd(redis_key, {keyword: count})
+            
+            # TTL 설정 (7일)
+            pipeline.expire(redis_key, 604800)
+            await pipeline.execute()
+            
+            logger.info(f"✅ {window_type} 데이터 Redis 저장 완료")
     def add_update_callback(self, callback):
         """업데이트 콜백 추가"""
         self.on_update_callbacks.append(callback)
