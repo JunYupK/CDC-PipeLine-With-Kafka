@@ -17,9 +17,14 @@ from confluent_kafka import Consumer, KafkaError, KafkaException
 
 from hybrid_keyword_extractor import HybridKeywordExtractor
 from advanced_trend_analyzer import AdvancedTrendAnalyzer, TrendMetrics
+from realtime_keyword_aggregator import RealTimeKeywordAggregator, WordCloudGenerator
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+aggregator = RealTimeKeywordAggregator()
+wordcloud_generator = WordCloudGenerator()
+
 
 load_dotenv()
 # 환경변수에서 Kafka 설정 읽기
@@ -167,6 +172,9 @@ class KafkaCDCEventHandler:
             # 트렌드 분석에 키워드 추가
             metadata = {'article_id': article_id}
             await self.analyzer.add_keywords(keywords, category, metadata)
+            
+            # 🔥 실시간 워드클라우드 집계 추가
+            await aggregator.on_cdc_event(keywords, category)
             
             # WebSocket 브로드캐스트
             message = {
@@ -399,18 +407,25 @@ def reset_consumer_group():
         
     except Exception as e:
         logger.error(f"❌ Consumer 그룹 리셋 실패: {e}")
-# main.py의 startup 함수에 추가
+# startup 이벤트에 추가
 @app.on_event("startup")
 async def startup():
     """서비스 시작시 초기화"""
     logger.info("🚀 키워드 추출 서비스 초기화 시작")
     
-    # 🔥 Consumer 그룹 리셋 (필요시)
-    reset_consumer_group()
-    
     # 서비스 초기화
     await extractor.initialize()
     await analyzer.initialize(redis_url="redis://:homesweethome@localhost:6379")
+    await aggregator.initialize(redis_url="redis://:homesweethome@localhost:6379")
+    
+    # 워드클라우드 업데이트 콜백 등록
+    async def broadcast_wordcloud_update(wordcloud_data):
+        await websocket_manager.broadcast({
+            "type": "wordcloud_update",
+            "data": wordcloud_data
+        })
+    
+    aggregator.add_update_callback(broadcast_wordcloud_update)
     
     # Kafka Consumer 시작
     kafka_consumer.start()
@@ -424,13 +439,26 @@ async def shutdown():
     kafka_consumer.stop()
     logger.info("✅ 서비스 종료 완료")
 
+# WebSocket 엔드포인트 수정
 @app.websocket("/ws/keywords")
 async def websocket_endpoint(websocket: WebSocket):
     """실시간 키워드 WebSocket"""
     await websocket_manager.connect(websocket)
     
     try:
-        # 연결 시 현재 트렌딩 키워드 전송
+        # 연결 시 현재 워드클라우드 데이터 전송
+        for window_type in ["1min", "5min", "15min"]:
+            wordcloud_data = await aggregator.get_current_wordcloud(window_type)
+            layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
+            
+            await websocket.send_text(json.dumps({
+                "type": "wordcloud_update",
+                "data": {
+                    window_type: layout
+                }
+            }, ensure_ascii=False))
+        
+        # 현재 트렌딩 키워드 전송
         trending = await analyzer.get_trending_keywords_advanced(10)
         await websocket.send_text(json.dumps({
             "type": "initial_trending",
@@ -445,11 +473,15 @@ async def websocket_endpoint(websocket: WebSocket):
             ]
         }, ensure_ascii=False))
         
+        # 통계 업데이트 스트리밍
+        stats_task = asyncio.create_task(stream_stats(websocket))
+        
         # 연결 유지
         while True:
             await websocket.receive_text()
             
     except WebSocketDisconnect:
+        stats_task.cancel()
         websocket_manager.disconnect(websocket)
 
 @app.get("/trending-keywords-advanced")
@@ -551,7 +583,75 @@ async def health_check():
         },
         "processed_count": event_handler.processed_count
     }
+# 통계 스트리밍 함수 추가
+async def stream_stats(websocket: WebSocket):
+    """주기적 통계 업데이트"""
+    try:
+        while True:
+            stats = {
+                "processed_articles": event_handler.processed_count,
+                "active_keywords": len((await aggregator.get_current_wordcloud("5min")).keywords),
+                "updates_received": aggregator.stats["updates_sent"],
+                "last_update": aggregator.stats["last_update"].isoformat() if aggregator.stats["last_update"] else None
+            }
+            
+            await websocket.send_text(json.dumps({
+                "type": "stats_update",
+                "data": stats
+            }))
+            
+            await asyncio.sleep(5)  # 5초마다 업데이트
+            
+    except Exception as e:
+        logger.error(f"통계 스트리밍 오류: {e}")
 
+# 새로운 API 엔드포인트 추가
+@app.get("/wordcloud/{window_type}")
+async def get_wordcloud(window_type: str = "5min"):
+    """워드클라우드 데이터 조회"""
+    if window_type not in ["1min", "5min", "15min"]:
+        return {"error": "Invalid window type"}
+    
+    wordcloud_data = await aggregator.get_current_wordcloud(window_type)
+    layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
+    
+    return layout
+
+@app.get("/wordcloud/{window_type}/history")
+async def get_wordcloud_history(window_type: str = "5min", hours: int = 1):
+    """워드클라우드 히스토리 조회"""
+    history = await aggregator.get_historical_data(window_type, hours)
+    return {"window_type": window_type, "history": history}
+
+@app.get("/wordcloud/compare")
+async def compare_windows():
+    """다중 윈도우 비교"""
+    comparison = {}
+    
+    for window_type in ["1min", "5min", "15min"]:
+        wordcloud_data = await aggregator.get_current_wordcloud(window_type)
+        comparison[window_type] = {
+            "total_count": wordcloud_data.total_count,
+            "unique_keywords": wordcloud_data.unique_keywords,
+            "top_5": wordcloud_data.top_keywords[:5]
+        }
+    
+    return comparison
+
+@app.get("/stats")
+async def get_service_stats():
+    """서비스 통계 (업데이트)"""
+    extraction_stats = extractor.get_extraction_stats()
+    aggregator_stats = aggregator.get_stats()
+    
+    return {
+        "processed_articles": event_handler.processed_count,
+        "active_websockets": len(websocket_manager.active_connections),
+        "extraction_stats": extraction_stats,
+        "aggregator_stats": aggregator_stats,
+        "kafka_running": kafka_consumer.running,
+        "timestamp": datetime.now().isoformat()
+    }
 # 🔥 디버깅용 엔드포인트 추가
 @app.get("/debug/kafka-status")
 async def debug_kafka_status():
