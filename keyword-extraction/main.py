@@ -17,8 +17,7 @@ from confluent_kafka import Consumer, KafkaError, KafkaException
 
 from hybrid_keyword_extractor import HybridKeywordExtractor
 from advanced_trend_analyzer import AdvancedTrendAnalyzer, TrendMetrics
-from realtime_keyword_aggregator import RealTimeKeywordAggregator, WordCloudGenerator
-
+from realtime_keyword_aggregator import RealTimeKeywordAggregator, WordCloudData, WordCloudGenerator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -114,7 +113,10 @@ class KafkaCDCEventHandler:
                 return True
                 
             logger.info(f"🔥 기사 처리 시작: {article_id} - {title[:50]}")
+                        # 마지막 부분
+            logger.info(f"✅ 이벤트 처리 성공")
             
+
             # 🔧 동기 방식으로 키워드 추출 (asyncio.run 사용)
             try:
                 keywords = asyncio.run(self._extract_keywords_sync(title, content, category, article_id))
@@ -152,19 +154,21 @@ class KafkaCDCEventHandler:
         return await self.extractor.extract_keywords(title, content, metadata)
     
     def _handle_async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
-        """비동기 작업들을 별도 스레드에서 처리"""
+        """비동기 작업 처리 (별도 이벤트 루프에서)"""
         try:
-            # 새 이벤트 루프 생성
+            # 새로운 이벤트 루프 생성
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # 비동기 작업 실행
-            loop.run_until_complete(self._async_tasks(article_id, title, category, keywords))
-            
+            try:
+                # 비동기 작업 실행
+                loop.run_until_complete(self._async_tasks(article_id, title, category, keywords))
+            finally:
+                # 이벤트 루프 정리
+                loop.close()
+                
         except Exception as e:
-            logger.error(f"비동기 작업 처리 오류: {e}")
-        finally:
-            loop.close()
+            logger.error(f"비동기 작업 실행 오류: {e}")
     
     async def _async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
         """실제 비동기 작업들"""
@@ -418,11 +422,25 @@ async def startup():
     await analyzer.initialize(redis_url="redis://:homesweethome@localhost:6379")
     await aggregator.initialize(redis_url="redis://:homesweethome@localhost:6379")
     
-    # 워드클라우드 업데이트 콜백 등록
+    # 워드클라우드 업데이트 콜백 등록 - Dict로 변환
     async def broadcast_wordcloud_update(wordcloud_data):
+        serializable_data = {}
+        for window_type, data in wordcloud_data.items():
+            if isinstance(data, WordCloudData):
+                serializable_data[window_type] = {
+                    "keywords": data.keywords,
+                    "window_type": data.window_type,
+                    "timestamp": data.timestamp.isoformat(),
+                    "total_count": data.total_count,
+                    "unique_keywords": data.unique_keywords,
+                    "top_keywords": data.top_keywords
+                }
+            else:
+                serializable_data[window_type] = data
+                
         await websocket_manager.broadcast({
             "type": "wordcloud_update",
-            "data": wordcloud_data
+            "data": serializable_data
         })
     
     aggregator.add_update_callback(broadcast_wordcloud_update)
@@ -663,6 +681,7 @@ async def debug_kafka_status():
         "config": kafka_consumer.kafka_config,
         "topics": kafka_consumer.topics
     }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)  # reload=False로 설정
