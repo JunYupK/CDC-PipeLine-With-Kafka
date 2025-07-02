@@ -1,9 +1,11 @@
-// WordCloudDashboard.js - 기존 CSS에 맞는 구조
+// src/WordCloudDashboard.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
+import cloud from 'd3-cloud';
 import './WordCloudDashboard.css';
 
 const WordCloudDashboard = () => {
+  const [wsConnection, setWsConnection] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [selectedWindow, setSelectedWindow] = useState('5min');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -16,87 +18,14 @@ const WordCloudDashboard = () => {
     updates_received: 0,
     last_update: null
   });
+  const [alerts, setAlerts] = useState([]);
   const [timeline, setTimeline] = useState(Array(30).fill(0));
   
   const d3Container = useRef(null);
   const wsRef = useRef(null);
+  const currentDataRef = useRef({});
 
-  // D3 워드클라우드 렌더링
-  const renderD3WordCloud = useCallback((data) => {
-    if (!d3Container.current || !data || !data.words) return;
-
-    console.log('🎨 D3 렌더링 시작:', data.words.length, '개 단어');
-
-    const words = data.words;
-    const width = d3Container.current.clientWidth;
-    const height = d3Container.current.clientHeight;
-
-    // 기존 SVG 제거
-    d3.select(d3Container.current).selectAll("*").remove();
-
-    const svg = d3.select(d3Container.current)
-      .append('svg')
-      .attr('width', width)
-      .attr('height', height);
-
-    const color = d3.scaleOrdinal(d3.schemeCategory10);
-    const maxCount = d3.max(words, d => d.count) || 1;
-    const fontScale = d3.scaleLinear()
-      .domain([1, maxCount])
-      .range([16, 60]);
-
-    // 그리드 레이아웃
-    const cols = Math.ceil(Math.sqrt(words.length));
-    const rows = Math.ceil(words.length / cols);
-    const cellWidth = width / cols;
-    const cellHeight = height / rows;
-
-    svg.selectAll('text')
-      .data(words)
-      .enter()
-      .append('text')
-      .text(d => d.text)
-      .attr('font-size', d => fontScale(d.count))
-      .attr('fill', (d, i) => color(i))
-      .attr('text-anchor', 'middle')
-      .attr('dominant-baseline', 'middle')
-      .attr('x', (d, i) => (i % cols) * cellWidth + cellWidth / 2)
-      .attr('y', (d, i) => Math.floor(i / cols) * cellHeight + cellHeight / 2)
-      .attr('opacity', 0)
-      .style('cursor', 'pointer')
-      .style('font-weight', 'bold')
-      .on('mouseover', function(event, d) {
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('font-size', fontScale(d.count) * 1.3)
-          .style('text-shadow', '2px 2px 4px rgba(0,0,0,0.5)');
-      })
-      .on('mouseout', function(event, d) {
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('font-size', fontScale(d.count))
-          .style('text-shadow', 'none');
-      })
-      .transition()
-      .duration(1000)
-      .attr('opacity', 1);
-
-    console.log('✅ D3 렌더링 완료');
-  }, []);
-
-  // 현재 선택된 윈도우 데이터 표시
-  useEffect(() => {
-    const currentData = wordCloudData[selectedWindow];
-    if (currentData && currentData.words && currentData.words.length > 0) {
-      console.log(`🔄 ${selectedWindow} 윈도우 데이터 표시:`, currentData.words.length, '개');
-      renderD3WordCloud(currentData);
-      updateRankings(currentData.words);
-    }
-  }, [selectedWindow, wordCloudData, renderD3WordCloud]);
-
-  // WebSocket 연결
+  // WebSocket 연결 설정
   useEffect(() => {
     let isMounted = true;
     let reconnectTimer = null;
@@ -104,88 +33,251 @@ const WordCloudDashboard = () => {
     const connectWebSocket = () => {
       if (!isMounted) return;
       
-      if (wsRef.current?.readyState !== WebSocket.CLOSED) {
-        wsRef.current?.close();
+      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+        wsRef.current.close(1000, 'Reconnecting');
       }
       
-      console.log('🔌 WebSocket 연결 시도...');
+      console.log('WebSocket 연결 시도...');
       const ws = new WebSocket('ws://localhost:8001/ws/keywords');
       wsRef.current = ws;
       
       ws.onopen = () => {
-        if (!isMounted) return;
+        if (!isMounted) {
+          ws.close();
+          return;
+        }
         setConnectionStatus('connected');
-        console.log('✅ WebSocket 연결 성공');
+        console.log('WebSocket 연결 성공');
+        
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
       };
       
       ws.onmessage = (event) => {
-        if (!isMounted || isPaused) return;
+        if (!isMounted) return;
         
         try {
           const data = JSON.parse(event.data);
-          console.log('📨 메시지 수신:', data.type);
           
-          switch (data.type) {
-            case 'wordcloud_update':
-              console.log('📊 워드클라우드 업데이트:', Object.keys(data.data));
-              setWordCloudData(data.data);
-              setStats(prev => ({ 
-                ...prev, 
-                updates_received: prev.updates_received + 1,
-                last_update: new Date().toISOString()
-              }));
-              break;
-              
-            case 'initial_trending':
-              console.log('🔥 초기 트렌딩 데이터');
-              updateRankingsFromTrending(data.data);
-              break;
-              
-            case 'stats_update':
-              console.log('📈 통계 업데이트');
-              setStats(prev => ({ ...prev, ...data.data }));
-              break;
-              
-            case 'ping':
+          if (data.type === 'ping') {
+            if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'pong' }));
-              break;
+            }
+            return;
+          }
+          
+          // 일시정지 상태가 아닐 때만 메시지 처리
+          if (!isPaused) {
+            handleWebSocketMessage(data);
           }
         } catch (error) {
-          console.error('❌ 메시지 파싱 오류:', error);
+          console.error('메시지 파싱 오류:', error);
         }
       };
       
       ws.onerror = (error) => {
-        console.error('❌ WebSocket 오류:', error);
-        setConnectionStatus('error');
+        console.error('WebSocket 오류:', error);
+        if (isMounted) {
+          setConnectionStatus('error');
+        }
       };
       
       ws.onclose = (event) => {
-        console.log('🔌 WebSocket 종료:', event.code);
+        console.log('WebSocket 종료:', event.code, event.reason);
+        
+        if (!isMounted) return;
+        
         setConnectionStatus('disconnected');
         
-        if (isMounted && event.code !== 1000) {
-          reconnectTimer = setTimeout(connectWebSocket, 5000);
+        if (event.code !== 1000 && event.code !== 1001) {
+          console.log('5초 후 재연결 시도...');
+          reconnectTimer = setTimeout(() => {
+            if (isMounted) {
+              connectWebSocket();
+            }
+          }, 5000);
         }
       };
+      
+      setWsConnection(ws);
     };
     
     connectWebSocket();
     
     return () => {
       isMounted = false;
-      clearTimeout(reconnectTimer);
-      wsRef.current?.close();
+      
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      
+      if (wsRef.current) {
+        console.log('WebSocket 정리 중...');
+        wsRef.current.close(1000, 'Component unmounting');
+        wsRef.current = null;
+      }
     };
-  }, [isPaused]);
+  }, [isPaused]); // isPaused 의존성 추가
+  // D3 WordCloud 렌더링
+  const renderD3WordCloud = useCallback((data) => {
+    if (!d3Container.current || !data.words || data.words.length === 0) return;
 
+    const width = d3Container.current.clientWidth;
+    const height = d3Container.current.clientHeight;
+
+    // Clear previous
+    d3.select(d3Container.current).selectAll("*").remove();
+
+    const svg = d3.select(d3Container.current)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+    const g = svg.append("g")
+      .attr("transform", `translate(${width/2},${height/2})`);
+
+    // Tooltip
+    const tooltip = d3.select("body").append("div")
+      .attr("class", "d3-tooltip")
+      .style("opacity", 0);
+
+    // Color scale
+    const colorScale = d3.scaleOrdinal()
+      .domain([0, 1, 2, 3, 4, 5])
+      .range(['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#a855f7']);
+
+    // Font size scale
+    const fontSizeScale = d3.scaleLinear()
+      .domain([
+        d3.min(data.words, d => d.count),
+        d3.max(data.words, d => d.count)
+      ])
+      .range([14, 60]);
+
+    // d3-cloud layout
+    const layout = cloud()
+      .size([width, height])
+      .words(data.words.map(d => ({
+        text: d.text,
+        size: fontSizeScale(d.count),
+        count: d.count,
+        rank: d.rank,
+        color: colorScale(d.rank % 6)
+      })))
+      .padding(5)
+      .rotate(() => (Math.random() - 0.5) * 60)
+      .font("Arial")
+      .fontSize(d => d.size)
+      .on("end", draw);
+
+    layout.start();
+
+    function draw(words) {
+      const text = g.selectAll("text")
+        .data(words)
+        .enter().append("text")
+        .style("font-size", d => `${d.size}px`)
+        .style("font-family", "Arial")
+        .style("font-weight", "bold")
+        .style("fill", d => d.color)
+        .style("cursor", "pointer")
+        .attr("text-anchor", "middle")
+        .attr("transform", d => `translate(${d.x},${d.y})rotate(${d.rotate})`)
+        .text(d => d.text)
+        .style("opacity", 0)
+        .on("click", handleKeywordClick)
+        .on("mouseover", function(event, d) {
+          d3.select(this)
+            .transition()
+            .duration(200)
+            .style("font-size", `${d.size * 1.2}px`);
+          
+          tooltip.transition()
+            .duration(200)
+            .style("opacity", 0.9);
+          
+          tooltip.html(`${d.text}<br/>Count: ${d.count}<br/>Rank: #${d.rank}`)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mouseout", function(event, d) {
+          d3.select(this)
+            .transition()
+            .duration(200)
+            .style("font-size", `${d.size}px`);
+          
+          tooltip.transition()
+            .duration(500)
+            .style("opacity", 0);
+        });
+
+      // Fade in animation
+      text.transition()
+        .duration(1000)
+        .style("opacity", 1);
+    }
+
+    // Cleanup tooltip on component unmount
+    return () => {
+      d3.select("body").selectAll(".d3-tooltip").remove();
+    };
+  }, []);
+  // WebSocket 메시지 처리
+  const handleWebSocketMessage = useCallback((data) => {
+    console.log('[WebSocket] 메시지 수신:', data);
+    switch (data.type) {
+      case 'wordcloud_update':
+        // 🔥 중요: 데이터는 저장하되, 1분 윈도우일 때만 자동 렌더링
+        const newData = { ...currentDataRef.current };
+        Object.keys(data.data).forEach(window => {
+          if (data.data[window]) {
+            newData[window] = data.data[window];
+          }
+        });
+        
+        currentDataRef.current = newData;
+        setWordCloudData(newData);
+        
+        console.log(`[WebSocket] 현재 선택된 윈도우: ${selectedWindow}`);
+        console.log('[WebSocket] 렌더링 할 데이터:', newData[selectedWindow]);
+
+        // 1분 윈도우를 선택했을 때만 실시간 업데이트 반영
+        if (selectedWindow === '1min' && newData['1min']) {
+          console.log('%c[WebSocket] 1분 윈도우 렌더링 조건 통과!', 'color: green; font-weight: bold;');
+          updateRankings(newData['1min'].words || []);
+          renderD3WordCloud(newData['1min']);
+        }
+        
+        // 통계는 항상 업데이트
+        setStats(prev => ({
+          ...prev,
+          updates_received: prev.updates_received + 1,
+          active_keywords: currentDataRef.current[selectedWindow]?.words?.length || 0
+        }));
+        break;
+      case 'new_keywords':
+        handleNewKeywords(data.data);
+        break;
+      case 'initial_trending':
+        updateRankingsFromTrending(data.data);
+        break;
+      case 'stats_update':
+        setStats(prev => ({ ...prev, ...data.data }));
+        break;
+      default:
+        break;
+    }
+  }, [selectedWindow, renderD3WordCloud]);
+
+  // 랭킹 업데이트
   const updateRankings = (words) => {
     const topWords = words.slice(0, 10);
     setRankings(topWords.map((word, idx) => ({
       rank: idx + 1,
       keyword: word.text,
       count: word.count,
-      trend: Math.random() > 0.5 ? 'up' : 'down'
+      trend: Math.random() > 0.5 ? 'up' : Math.random() > 0.5 ? 'down' : 'stable'
     })));
   };
 
@@ -194,91 +286,84 @@ const WordCloudDashboard = () => {
       rank: idx + 1,
       keyword: item.keyword,
       count: item.count,
-      trend: item.trend === 'rising' ? 'up' : 'down'
+      trend: item.trend === 'rising' ? 'up' : item.trend === 'falling' ? 'down' : 'stable'
     })));
   };
 
-  // 테스트 데이터 생성
-  const generateTestData = () => {
-    const testWords = [
-      { text: '테스트', count: 25 },
-      { text: 'React', count: 20 },
-      { text: 'WebSocket', count: 18 },
-      { text: '실시간', count: 15 },
-      { text: '워드클라우드', count: 12 },
-      { text: 'D3.js', count: 10 },
-      { text: '키워드', count: 8 },
-      { text: '분석', count: 6 }
-    ];
 
-    const testData = {
-      '1min': { words: testWords.slice(0, 4) },
-      '5min': { words: testWords.slice(0, 6) },
-      '15min': { words: testWords }
+
+  const handleKeywordClick = (event, d) => {
+    console.log('Keyword clicked:', d.text);
+    // TODO: 키워드 상세 분석 모달 표시
+  };
+
+  const handleNewKeywords = (data) => {
+    setStats(prev => ({
+      ...prev,
+      processed_articles: prev.processed_articles + 1,
+      last_update: new Date().toISOString()
+    }));
+    
+    // Update timeline
+    setTimeline(prev => {
+      const newTimeline = [...prev.slice(1), Math.random() * 100];
+      return newTimeline;
+    });
+  };
+
+  // 시간 윈도우 변경 시 즉시 렌더링
+  useEffect(() => {
+    if (currentDataRef.current[selectedWindow]) {
+      renderD3WordCloud(currentDataRef.current[selectedWindow]);
+      updateRankings(currentDataRef.current[selectedWindow].words || []);
+    }
+  }, [selectedWindow, renderD3WordCloud]);
+
+  // 윈도우 리사이즈 핸들링
+  useEffect(() => {
+    const handleResize = () => {
+      if (currentDataRef.current[selectedWindow]) {
+        renderD3WordCloud(currentDataRef.current[selectedWindow]);
+      }
     };
 
-    console.log('🧪 테스트 데이터 생성');
-    setWordCloudData(testData);
-    
-    // 타임라인 테스트 데이터
-    setTimeline(Array(30).fill(0).map(() => Math.random() * 100));
-  };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [selectedWindow, renderD3WordCloud]);
 
   return (
     <div className="dashboard">
       {/* Controls */}
       <div className="controls">
         <div className="controls-left">
-          <h1>🚀 실시간 키워드 분석</h1>
-          
+          <h1>📊 실시간 키워드 트렌드</h1>
           <div className="window-toggle">
             {['1min', '5min', '15min'].map(window => (
               <button
                 key={window}
                 className={`window-btn ${selectedWindow === window ? 'active' : ''}`}
-                onClick={() => {
-                  console.log(`🔄 윈도우 변경: ${selectedWindow} → ${window}`);
-                  setSelectedWindow(window);
-                }}
+                onClick={() => setSelectedWindow(window)}
               >
-                {window}
+                {window === '1min' ? '1분' : window === '5min' ? '5분' : '15분'}
               </button>
             ))}
           </div>
-          
+        </div>
+        <div className="controls-right">
           <div className="category-filter">
-            <select 
-              value={selectedCategory} 
-              onChange={(e) => setSelectedCategory(e.target.value)}
-            >
-              <option value="all">전체</option>
+            <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
+              <option value="all">전체 카테고리</option>
               <option value="politics">정치</option>
               <option value="economy">경제</option>
               <option value="society">사회</option>
+              <option value="tech">IT과학</option>
             </select>
           </div>
-        </div>
-
-        <div className="controls-right">
           <button 
+            className={`play-pause ${isPaused ? 'paused' : ''}`} 
             onClick={() => setIsPaused(!isPaused)}
-            className={`play-pause ${isPaused ? 'paused' : ''}`}
           >
             {isPaused ? '▶️ 재생' : '⏸️ 일시정지'}
-          </button>
-          
-          <button 
-            onClick={generateTestData}
-            style={{
-              background: '#9C27B0',
-              border: 'none',
-              color: 'white',
-              padding: '10px 20px',
-              borderRadius: '8px',
-              cursor: 'pointer'
-            }}
-          >
-            🧪 테스트
           </button>
         </div>
       </div>
