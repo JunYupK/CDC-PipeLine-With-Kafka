@@ -472,8 +472,61 @@ async def startup():
     # Kafka Consumer 시작
     kafka_consumer.start()
     
+    # 🔥 주기적 워드클라우드 업데이트 태스크 추가
+    asyncio.create_task(periodic_wordcloud_update())
+    
     logger.info("✅ 키워드 추출 서비스 시작 완료")
 
+
+# periodic_wordcloud_update 함수 수정
+async def periodic_wordcloud_update():
+    """1분마다 모든 윈도우의 워드클라우드 업데이트"""
+    logger.info("🔄 주기적 워드클라우드 업데이트 시작")
+    
+    while True:
+        try:
+            await asyncio.sleep(60)  # 1분 대기
+            
+            # 🔥 중요: 모든 시간 윈도우의 데이터를 항상 포함
+            all_wordcloud_data = {}
+            
+            for window_type in ["1min", "5min", "15min"]:
+                try:
+                    # 현재 워드클라우드 데이터 가져오기
+                    wordcloud_data = await aggregator.get_current_wordcloud(window_type)
+                    
+                    # 워드클라우드 레이아웃 생성
+                    layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
+                    
+                    # 🔥 중요: 각 윈도우의 전체 데이터를 포함
+                    all_wordcloud_data[window_type] = {
+                        "words": layout.get("words", []),
+                        "window_type": window_type,
+                        "timestamp": datetime.now().isoformat(),
+                        "total_count": wordcloud_data.total_count,
+                        "unique_keywords": wordcloud_data.unique_keywords
+                    }
+                    
+                    logger.info(f"📊 {window_type} 워드클라우드 - 키워드 수: {len(layout.get('words', []))}")
+                    
+                except Exception as e:
+                    logger.error(f"워드클라우드 생성 오류 ({window_type}): {e}")
+                    continue
+            
+            # WebSocket으로 브로드캐스트 - 모든 윈도우 데이터 포함
+            if all_wordcloud_data:
+                await websocket_manager.broadcast({
+                    "type": "wordcloud_update",
+                    "data": all_wordcloud_data  # 1min, 5min, 15min 모두 포함
+                })
+                
+                logger.info(f"📡 주기적 워드클라우드 업데이트 완료 - {datetime.now().strftime('%H:%M:%S')}")
+                logger.info(f"   └─ 전송된 윈도우: {list(all_wordcloud_data.keys())}")
+            
+        except Exception as e:
+            logger.error(f"주기적 업데이트 오류: {e}")
+            await asyncio.sleep(10)  # 오류 시 10초 후 재시도
+            
 @app.on_event("shutdown")
 async def shutdown():
     """서비스 종료"""

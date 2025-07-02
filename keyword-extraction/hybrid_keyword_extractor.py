@@ -298,35 +298,3 @@ class HybridKeywordExtractor:
         
         return results
 
-
-# 사용 예시
-async def main():
-    # 초기화
-    extractor = HybridKeywordExtractor(openai_api_key="your-api-key")  # Optional
-    await extractor.initialize()
-    
-    # 단일 기사 키워드 추출
-    article = {
-        'title': '삼성전자, 차세대 반도체 개발 박차',
-        'content': '삼성전자가 차세대 반도체 개발에 박차를 가하고 있다...',
-        'metadata': {
-            'views_count': 15000,
-            'comments_count': 120,
-            'category': '경제'
-        }
-    }
-    
-    keywords = await extractor.extract_keywords(
-        article['title'],
-        article['content'],
-        article['metadata']
-    )
-    print(f"추출된 키워드: {keywords}")
-    
-    # 통계 확인
-    stats = extractor.get_extraction_stats()
-    print(f"통계: {stats}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

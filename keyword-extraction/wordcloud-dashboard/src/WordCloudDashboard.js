@@ -36,9 +36,9 @@ const WordCloudDashboard = () => {
       if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
         wsRef.current.close(1000, 'Reconnecting');
       }
-      
+      const wsUrl = process.env.REACT_APP_WEBSOCKET_URL;
       console.log('WebSocket 연결 시도...');
-      const ws = new WebSocket('ws://localhost:8001/ws/keywords');
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       
       ws.onopen = () => {
