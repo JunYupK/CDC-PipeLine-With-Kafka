@@ -76,6 +76,7 @@ public class CrawlerServiceImpl implements CrawlerService {
 
     // 하이브리드 크롤링을 위한 추가 필드
     private final ConcurrentHashMap<String, Set<String>> visitedUrls = new ConcurrentHashMap<>();
+    private final Set<String> nextLink = ConcurrentHashMap.newKeySet();
     private static final int WORKER_COUNT = 3; // Consumer 스레드 수
 
 
@@ -143,6 +144,14 @@ public class CrawlerServiceImpl implements CrawlerService {
                     log.info("📈 크롤링 사이클 {} 시작", currentCycle);
 
                     try {
+
+                        if (isContinuousDeepCrawling.get()) {
+                            long sportStartTime = System.currentTimeMillis(); // 📊 추가
+                            crawlRandomCategoriesDeep(1, 100);
+                            long sportDuration = System.currentTimeMillis() - sportStartTime; // 📊 추가
+                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "sports", sportDuration);
+                        }
+
                         // 1. 스포츠 카테고리 크롤링
                         if (isContinuousDeepCrawling.get()) {
                             long sportStartTime = System.currentTimeMillis(); // 📊 추가
@@ -151,13 +160,13 @@ public class CrawlerServiceImpl implements CrawlerService {
                             crawlerMetrics.recordCycleCrawlTime(currentCycle, "sports", sportDuration);
                         }
 
-                        // 일반 카테고리 크롤링
-//                        if (isContinuousDeepCrawling.get()) {
-//                            long basicStartTime = System.currentTimeMillis(); // 📊 추가
-//                            crawlBasicCategoriesDeep(2, 100);
-//                            long basicDuration = System.currentTimeMillis() - basicStartTime; // 📊 추가
-//                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "basic", basicDuration); // 📊 추가
-//                        }
+//                         일반 카테고리 크롤링
+                        if (isContinuousDeepCrawling.get()) {
+                            long basicStartTime = System.currentTimeMillis(); // 📊 추가
+                            crawlBasicCategoriesDeep(2, 100);
+                            long basicDuration = System.currentTimeMillis() - basicStartTime; // 📊 추가
+                            crawlerMetrics.recordCycleCrawlTime(currentCycle, "basic", basicDuration); // 📊 추가
+                        }
 
 
                         // 3. 사이클 간 대기 시간
@@ -346,7 +355,7 @@ public class CrawlerServiceImpl implements CrawlerService {
         );
 
         try {
-            allSportsTasks.get(10, TimeUnit.MINUTES); // 10분 타임아웃
+            allSportsTasks.get(30, TimeUnit.MINUTES); // 10분 타임아웃
             log.info("🏆 모든 스포츠 카테고리 병렬처리 완료");
         } catch (Exception e) {
             log.error("❌ 스포츠 카테고리 병렬처리 중 타임아웃 또는 오류", e);
@@ -392,10 +401,45 @@ public class CrawlerServiceImpl implements CrawlerService {
         );
 
         try {
-            allBasicTasks.get(15, TimeUnit.MINUTES); // 15분 타임아웃 (일반 카테고리가 더 많음)
+            allBasicTasks.get(30, TimeUnit.MINUTES); // 15분 타임아웃 (일반 카테고리가 더 많음)
             log.info("📚 모든 일반 카테고리 병렬처리 완료");
         } catch (Exception e) {
             log.error("❌ 일반 카테고리 병렬처리 중 타임아웃 또는 오류", e);
+        }
+    }
+    // ===== BFS Deep Crawling 메서드들 =====
+    private void crawlRandomCategoriesDeep(int maxDepth, int maxPages) {
+        Set<String> categories = nextLink;
+        List<CompletableFuture<Void>> categoryTasks = new ArrayList<>();
+        if(categories.size() == 0) categories.add("https://imnews.imbc.com/news/2025/politics/article/6733093_36711.html");
+        categories.forEach(startUrl -> {
+            CompletableFuture<Void> task = CompletableFuture.runAsync(() -> {
+                crawlingSemaphore.tryAcquire();
+                try {
+                    long categoryStartTime = System.currentTimeMillis();
+                    log.info("🏃‍♂️ 랜덤 병렬 딥크롤링 시작");
+                    processCategoryDeep("랜덤", startUrl, NaverNewsSchemas.getRandomNewsSchema(), maxDepth, maxPages);
+
+                    long categoryDuration = System.currentTimeMillis() - categoryStartTime;
+                }catch (Exception e){
+                    log.error(e.getMessage(), e);
+                }finally {
+                    crawlingSemaphore.release();
+                }
+            },parallelExecutor);
+
+            categoryTasks.add(task);
+        });
+        // 모든 스포츠 카테고리 완료 대기
+        CompletableFuture<Void> allRandomTasks = CompletableFuture.allOf(
+                categoryTasks.toArray(new CompletableFuture[0])
+        );
+
+        try {
+            allRandomTasks.get(30, TimeUnit.MINUTES); // 10분 타임아웃
+            log.info("🏆 모든 스포츠 카테고리 병렬처리 완료");
+        } catch (Exception e) {
+            log.error("❌ 스포츠 카테고리 병렬처리 중 타임아웃 또는 오류", e);
         }
     }
     /**
@@ -553,7 +597,9 @@ public class CrawlerServiceImpl implements CrawlerService {
             log.warn("기사 내용이 비어있습니다: {}", link);
             return null;
         }
-
+        if(nextLink.size() < 8){
+            nextLink.add(link);
+        }
         // Article 저장
         Article article = saveArticle(title, content, link, category);
 

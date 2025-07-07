@@ -130,6 +130,37 @@ public class NaverNewsSchemas {
                 )
         );
     }
+    public static Map<String,Object> getRandomNewsSchema() {
+        return Map.of(
+                "name", "UniversalNews",
+                "baseSelector", "body",
+                "fields", List.of(
+                        Map.of(
+                                "name", "title",
+                                "selector", String.join(", ",
+                                        "h1", "h1.headline", "h1.title",
+                                        "#article_title", "#title",
+                                        "article h1", "header h1",
+                                        ".headline", ".title", ".article-title",
+                                        "main h1", "section h1",
+                                        "[class*='title'] h1", "[class*='headline'] h1"
+                                ),
+                                "type", "text"
+                        ),
+                        Map.of(
+                                "name", "content",
+                                "selector", String.join(", ",
+                                        "article", ".article-content", ".content",
+                                        ".article-body", ".post-content", ".entry-content",
+                                        "main article", "section article",
+                                        "[class*='content']", "[class*='article']",
+                                        ".news-content", ".story-content"
+                                ),
+                                "type", "text"
+                        )
+                )
+        );
+    }
 
 
 

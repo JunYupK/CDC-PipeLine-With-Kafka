@@ -323,23 +323,26 @@ public class Crawl4AIRequest {
                                                                         "params", Map.of(
                                                                                 "patterns", List.of(
                                                                                         // 일반 뉴스 패턴
-                                                                                        "*/mnews/article/*/*",
-                                                                                        "*news.naver.com/mnews/article*",
-
-                                                                                        // 스포츠 뉴스 패턴
-                                                                                        "*sports.naver.com/*/article/*/*",
-                                                                                        "*sports.naver.com/kbaseball/article*",
-                                                                                        "*sports.naver.com/kfootball/article*",
-                                                                                        "*sports.naver.com/wbaseball/article*",
-                                                                                        "*sports.naver.com/basketball/article*",
-                                                                                        "*sports.naver.com/volleyball/article*",
-                                                                                        "*sports.naver.com/golf/article*",
-                                                                                        "*sports.naver.com/esports/article*",
-                                                                                        "*sports.naver.com/general/article*",
-
-                                                                                        // 섹션 페이지도 포함 (링크 발견용)
-                                                                                        "*/section/*",
-                                                                                        "*news.naver.com/section*"
+//                                                                                        "*/mnews/article/*/*",
+//                                                                                        "*news.naver.com/mnews/article*",
+//
+//                                                                                        // 스포츠 뉴스 패턴
+//                                                                                        "*sports.naver.com/*/article/*/*",
+//                                                                                        "*sports.naver.com/kbaseball/article*",
+//                                                                                        "*sports.naver.com/kfootball/article*",
+//                                                                                        "*sports.naver.com/wbaseball/article*",
+//                                                                                        "*sports.naver.com/basketball/article*",
+//                                                                                        "*sports.naver.com/volleyball/article*",
+//                                                                                        "*sports.naver.com/golf/article*",
+//                                                                                        "*sports.naver.com/esports/article*",
+//                                                                                        "*sports.naver.com/general/article*",
+//
+//                                                                                        // 섹션 페이지도 포함 (링크 발견용)
+//                                                                                        "*/section/*",
+//                                                                                        "*news.naver.com/section*"
+                                                                                        "*news*",  // news가 포함된 모든 URL
+                                                                                        "*news/*", // news 디렉토리 하위
+                                                                                        "*/news/*" // 경로에 news가 있는 URL
                                                                                 )
                                                                         )
                                                                 ),
