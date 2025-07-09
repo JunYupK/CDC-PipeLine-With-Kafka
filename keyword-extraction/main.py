@@ -1,4 +1,4 @@
-# main.py - 안정적인 키워드 추출 서비스 (confluent_kafka 사용)
+# main.py - 안정적인 키워드 추출 서비스 (오류 수정 버전)
 import os
 import json
 import logging
@@ -18,12 +18,13 @@ from confluent_kafka import Consumer, KafkaError, KafkaException
 from hybrid_keyword_extractor import HybridKeywordExtractor
 from advanced_trend_analyzer import AdvancedTrendAnalyzer, TrendMetrics
 from realtime_keyword_aggregator import RealTimeKeywordAggregator, WordCloudData, WordCloudGenerator
+from keyword_republisher import KafkaKeywordRepublisher, EnhancedKeywordProcessor
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 aggregator = RealTimeKeywordAggregator()
 wordcloud_generator = WordCloudGenerator()
-
 
 load_dotenv()
 # 환경변수에서 Kafka 설정 읽기
@@ -34,6 +35,7 @@ KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID')
 print(f"Kafka: {KAFKA_BOOTSTRAP_SERVERS}")
 print(f"Topic: {KAFKA_TOPIC}")
 print(f"Group: {KAFKA_GROUP_ID}")
+
 # === 모델 정의 ===
 class KeywordRequest(BaseModel):
     title: str
@@ -77,7 +79,7 @@ class WebSocketManager:
         self.active_connections -= disconnected
 
 class KafkaCDCEventHandler:
-    """CDC 이벤트 처리 클래스"""
+    """CDC 이벤트 처리 클래스 (수정됨)"""
     
     def __init__(self, extractor: HybridKeywordExtractor, analyzer: AdvancedTrendAnalyzer, websocket_manager: WebSocketManager):
         self.extractor = extractor
@@ -85,11 +87,28 @@ class KafkaCDCEventHandler:
         self.websocket_manager = websocket_manager
         self.processed_count = 0
         
+        # 🔥 Kafka 재발행기 초기화 (옵셔널)
+        self.keyword_processor = None
+        
+        try:
+            bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS') or "localhost:9092"
+            self.republisher = KafkaKeywordRepublisher(
+                bootstrap_servers=bootstrap_servers,
+                keyword_topic="processed-keywords"
+            )
+            self.keyword_processor = EnhancedKeywordProcessor(self.republisher)
+            logger.info("✅ 키워드 재발행기 초기화 완료")
+        except Exception as e:
+            logger.error(f"❌ 재발행기 초기화 실패: {e}")
+            self.republisher = None
+            self.keyword_processor = None
+
     def process_event(self, event: Dict) -> bool:
-        """CDC 이벤트 동기 처리"""
+        """CDC 이벤트 동기 처리 (수정됨)"""
         try:
             # 이벤트 구조 확인
             payload = event.get('payload', event)
+            
             if not payload:
                 return False
                 
@@ -113,26 +132,33 @@ class KafkaCDCEventHandler:
                 return True
                 
             logger.info(f"🔥 기사 처리 시작: {article_id} - {title[:50]}")
-                        # 마지막 부분
-            logger.info(f"✅ 이벤트 처리 성공")
-            
 
-            # 🔧 동기 방식으로 키워드 추출 (asyncio.run 사용)
+            # 🔧 비동기 키워드 추출을 동기 방식으로 처리
             try:
-                keywords = asyncio.run(self._extract_keywords_sync(title, content, category, article_id))
+                # 새로운 이벤트 루프에서 키워드 추출 실행
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 
-                if keywords:
-                    self.processed_count += 1
+                try:
+                    keywords = loop.run_until_complete(
+                        self._extract_keywords_async(title, content, category, article_id)
+                    )
                     
-                    # 비동기 작업을 별도 스레드에서 실행
-                    threading.Thread(
-                        target=self._handle_async_tasks,
-                        args=(article_id, title, category, keywords)
-                    ).start()
-                    
-                    logger.info(f"✅ 키워드 추출 완료: {len(keywords)}개 - {keywords[:5]}")
-                else:
-                    logger.warning(f"⚠️ 키워드 추출 실패: {article_id}")
+                    if keywords:
+                        self.processed_count += 1
+                        
+                        # 비동기 작업을 별도 스레드에서 실행
+                        threading.Thread(
+                            target=self._handle_async_tasks,
+                            args=(article_id, title, content, category, keywords)
+                        ).start()
+                        
+                        logger.info(f"✅ 키워드 추출 완료: {len(keywords)}개 - {keywords[:5]}")
+                    else:
+                        logger.warning(f"⚠️ 키워드 추출 실패: {article_id}")
+                        
+                finally:
+                    loop.close()
                     
             except Exception as e:
                 logger.error(f"❌ 키워드 추출 중 오류: {e}")
@@ -144,7 +170,7 @@ class KafkaCDCEventHandler:
             logger.error(f"❌ 이벤트 처리 중 오류: {e}", exc_info=True)
             return False
     
-    async def _extract_keywords_sync(self, title: str, content: str, category: str, article_id: int):
+    async def _extract_keywords_async(self, title: str, content: str, category: str, article_id: int):
         """키워드 추출 (비동기)"""
         metadata = {
             'category': category,
@@ -153,28 +179,18 @@ class KafkaCDCEventHandler:
         
         return await self.extractor.extract_keywords(title, content, metadata)
     
-    def _handle_async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
+    def _handle_async_tasks(self, article_id: int, title: str, content: str, category: str, keywords: List[str]):
         """비동기 작업 처리 (별도 이벤트 루프에서)"""
         loop = None
         try:
-            # 현재 스레드에 이벤트 루프가 있는지 확인
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = None
-            except RuntimeError:
-                loop = None
-            
             # 새로운 이벤트 루프 생성
-            if loop is None:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             
             # 비동기 작업 실행
-            try:
-                loop.run_until_complete(self._async_tasks(article_id, title, category, keywords))
-            except Exception as e:
-                logger.error(f"비동기 작업 실행 중 오류: {e}")
+            loop.run_until_complete(
+                self._async_tasks_with_republish(article_id, title, content, category, keywords)
+            )
                 
         except Exception as e:
             logger.error(f"비동기 작업 실행 오류: {e}")
@@ -182,29 +198,48 @@ class KafkaCDCEventHandler:
             # 이벤트 루프 안전하게 정리
             if loop and not loop.is_closed():
                 try:
-                    # 대기 중인 태스크들 정리
                     pending = asyncio.all_tasks(loop)
-                    if pending:
-                        for task in pending:
-                            task.cancel()
+                    for task in pending:
+                        task.cancel()
                     
-                    # 루프 정리
                     loop.run_until_complete(loop.shutdown_asyncgens())
                     loop.close()
                 except Exception as cleanup_error:
                     logger.error(f"이벤트 루프 정리 중 오류: {cleanup_error}")
     
-    async def _async_tasks(self, article_id: int, title: str, category: str, keywords: List[str]):
-        """실제 비동기 작업들"""
+    async def _async_tasks_with_republish(self, article_id: int, title: str, content: str, 
+                                        category: str, keywords: List[str]):
+        """재발행 기능이 포함된 비동기 작업들"""
         try:
-            # 트렌드 분석에 키워드 추가
+            # 1. 기존 트렌드 분석
             metadata = {'article_id': article_id}
             await self.analyzer.add_keywords(keywords, category, metadata)
             
-            # 🔥 실시간 워드클라우드 집계 추가
+            # 2. 실시간 워드클라우드 집계
             await aggregator.on_cdc_event(keywords, category)
             
-            # WebSocket 브로드캐스트
+            # 3. 🔥 키워드 처리 및 Kafka 재발행 (옵셔널)
+            republish_success = False
+            if self.keyword_processor:
+                try:
+                    confidence_scores = getattr(self.extractor, 'last_confidence_scores', {})
+                    republish_success = await self.keyword_processor.process_and_republish(
+                        article_id=article_id,
+                        title=title,
+                        content=content,
+                        category=category,
+                        raw_keywords=keywords,
+                        confidence_scores=confidence_scores
+                    )
+                    
+                    if republish_success:
+                        logger.info(f"🚀 키워드 재발행 성공: article_{article_id}")
+                    else:
+                        logger.error(f"❌ 키워드 재발행 실패: article_{article_id}")
+                except Exception as e:
+                    logger.error(f"재발행 처리 중 오류: {e}")
+            
+            # 4. WebSocket 브로드캐스트 (재발행 상태 포함)
             message = {
                 "type": "new_keywords",
                 "data": {
@@ -212,6 +247,7 @@ class KafkaCDCEventHandler:
                     "title": title,
                     "category": category,
                     "keywords": keywords,
+                    "republished": republish_success,
                     "timestamp": datetime.now().isoformat()
                 }
             }
@@ -229,17 +265,16 @@ class StableKafkaConsumer:
         self.consumer = None
         self.worker_thread = None
         
-        # 🔥 디버깅을 위한 설정 변경
+        # Kafka 설정
         self.kafka_config = {
             'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
             'group.id': KAFKA_GROUP_ID,
-            'auto.offset.reset': 'latest',  # 처음부터 읽기
+            'auto.offset.reset': 'latest',
             'enable.auto.commit': True,
             'auto.commit.interval.ms': 1000,
             'max.poll.interval.ms': 300000,
             'session.timeout.ms': 30000,
             'heartbeat.interval.ms': 3000,
-            # 'debug': 'consumer,cgrp,topic,fetch',  # 🔥 디버깅 활성화
         }
         
         self.topics = [KAFKA_TOPIC]
@@ -265,7 +300,7 @@ class StableKafkaConsumer:
             logger.info("Kafka Consumer 중지 완료")
             
     def _consume_loop(self):
-        """메시지 소비 루프 (디버깅 강화)"""
+        """메시지 소비 루프"""
         try:
             logger.info(f"🔧 Kafka 설정: {self.kafka_config}")
             
@@ -273,7 +308,7 @@ class StableKafkaConsumer:
             self.consumer.subscribe(self.topics)
             logger.info(f"📡 토픽 구독 완료: {self.topics}")
             
-            # 🔥 Consumer 메타데이터 확인
+            # Consumer 메타데이터 확인
             metadata = self.consumer.list_topics(timeout=10)
             logger.info(f"📊 사용 가능한 토픽: {list(metadata.topics.keys())}")
             
@@ -290,27 +325,10 @@ class StableKafkaConsumer:
             while self.running:
                 try:
                     poll_count += 1
-                    
-                    # 🔥 메시지 폴링 (더 긴 타임아웃)
                     msg = self.consumer.poll(timeout=5.0)
                     
-                    # 🔥 폴링 상태 로깅 (매 10번마다)
                     if poll_count % 10 == 0:
                         logger.info(f"⏰ 폴링 #{poll_count} - 메시지: {'있음' if msg else '없음'}")
-                        
-                        # Consumer 할당 상태 확인
-                        assignment = self.consumer.assignment()
-                        for partition in assignment:
-                            logger.info(f"📍 파티션: {partition.topic}[{partition.partition}] offset={partition.offset}")
-                        
-                        # 각 파티션의 오프셋 확인
-                        for partition in assignment:
-                            try:
-                                position = self.consumer.position([partition])
-                                committed = self.consumer.committed([partition])
-                                logger.info(f"📊 파티션 {partition}: position={position}, committed={committed}")
-                            except Exception as e:
-                                logger.error(f"오프셋 확인 실패: {e}")
                     
                     if msg is None:
                         continue
@@ -322,34 +340,13 @@ class StableKafkaConsumer:
                             logger.error(f"Kafka 오류: {msg.error()}")
                         continue
                     
-                    # 🔥 메시지 수신 로깅 강화
                     message_count += 1
                     logger.info(f"🔥📨 메시지 #{message_count} 수신!")
-                    logger.info(f"  ├─ 토픽: {msg.topic()}")
-                    logger.info(f"  ├─ 파티션: {msg.partition()}")
-                    logger.info(f"  ├─ 오프셋: {msg.offset()}")
-                    logger.info(f"  └─ 크기: {len(msg.value())} bytes")
                     
-                    # 🔥 메시지 내용 미리보기
                     try:
                         value = msg.value()
                         if value:
-                            preview = value.decode('utf-8')[:200]
-                            logger.info(f"📄 내용 미리보기: {preview}...")
-                            
                             event = json.loads(value.decode('utf-8'))
-                            
-                            # 🔥 이벤트 구조 로깅
-                            payload = event.get('payload', {})
-                            op = payload.get('op', 'unknown')
-                            after = payload.get('after', {})
-                            article_id = after.get('id', 'unknown')
-                            title = after.get('title', 'unknown')[:30]
-                            
-                            logger.info(f"🔍 이벤트 분석:")
-                            logger.info(f"  ├─ 작업: {op}")
-                            logger.info(f"  ├─ 기사 ID: {article_id}")
-                            logger.info(f"  └─ 제목: {title}...")
                             
                             # 이벤트 처리
                             success = self.event_handler.process_event(event)
@@ -378,7 +375,6 @@ class StableKafkaConsumer:
                 except Exception as e:
                     logger.error(f"Consumer 종료 오류: {e}")
 
-
 # === FastAPI 앱 ===
 app = FastAPI(title="안정적인 키워드 추출 서비스", version="3.0.0")
 
@@ -396,46 +392,7 @@ analyzer = AdvancedTrendAnalyzer()
 websocket_manager = WebSocketManager()
 event_handler = KafkaCDCEventHandler(extractor, analyzer, websocket_manager)
 kafka_consumer = StableKafkaConsumer(event_handler)
-# 🔥 추가: Consumer 그룹 리셋 함수
-def reset_consumer_group():
-    """Consumer 그룹 오프셋 리셋"""
-    try:
-        from confluent_kafka.admin import AdminClient, ConfigResource
-        
-        admin_client = AdminClient({
-            'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS
-        })
-        
-        # Consumer 그룹 정보 확인
-        logger.info(f"🔧 Consumer 그룹 '{KAFKA_GROUP_ID}' 리셋 시도")
-        
-        # 새로운 Consumer로 오프셋 리셋
-        reset_consumer = Consumer({
-            'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
-            'group.id': KAFKA_GROUP_ID + '-reset',
-            'auto.offset.reset': 'earliest'
-        })
-        
-        reset_consumer.subscribe([KAFKA_TOPIC])
-        
-        # 파티션 할당 대기
-        msg = reset_consumer.poll(timeout=10.0)
-        assignment = reset_consumer.assignment()
-        
-        if assignment:
-            logger.info(f"📍 리셋용 파티션 할당: {assignment}")
-            
-            # 각 파티션의 시작 오프셋으로 이동
-            for partition in assignment:
-                low, high = reset_consumer.get_watermark_offsets(partition, timeout=10.0)
-                logger.info(f"📊 파티션 {partition}: low={low}, high={high}")
-        
-        reset_consumer.close()
-        logger.info("✅ Consumer 그룹 리셋 완료")
-        
-    except Exception as e:
-        logger.error(f"❌ Consumer 그룹 리셋 실패: {e}")
-# startup 이벤트에 추가
+
 @app.on_event("startup")
 async def startup():
     """서비스 시작시 초기화"""
@@ -446,7 +403,7 @@ async def startup():
     await analyzer.initialize(redis_url="redis://:homesweethome@localhost:6379")
     await aggregator.initialize(redis_url="redis://:homesweethome@localhost:6379")
     
-    # 워드클라우드 업데이트 콜백 등록 - Dict로 변환
+    # 워드클라우드 업데이트 콜백 등록
     async def broadcast_wordcloud_update(wordcloud_data):
         serializable_data = {}
         for window_type, data in wordcloud_data.items():
@@ -472,33 +429,26 @@ async def startup():
     # Kafka Consumer 시작
     kafka_consumer.start()
     
-    # 🔥 주기적 워드클라우드 업데이트 태스크 추가
+    # 주기적 워드클라우드 업데이트 태스크 추가
     asyncio.create_task(periodic_wordcloud_update())
     
     logger.info("✅ 키워드 추출 서비스 시작 완료")
 
-
-# periodic_wordcloud_update 함수 수정
 async def periodic_wordcloud_update():
-    """1분마다 모든 윈도우의 워드클라우드 업데이트"""
+    """주기적 워드클라우드 업데이트"""
     logger.info("🔄 주기적 워드클라우드 업데이트 시작")
     
     while True:
         try:
-            await asyncio.sleep(300)  # 1분 대기
+            await asyncio.sleep(60)  # 1분 대기
             
-            # 🔥 중요: 모든 시간 윈도우의 데이터를 항상 포함
             all_wordcloud_data = {}
             
             for window_type in ["30min", "1h", "6h"]:
                 try:
-                    # 현재 워드클라우드 데이터 가져오기
                     wordcloud_data = await aggregator.get_current_wordcloud(window_type)
-                    
-                    # 워드클라우드 레이아웃 생성
                     layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
                     
-                    # 🔥 중요: 각 윈도우의 전체 데이터를 포함
                     all_wordcloud_data[window_type] = {
                         "words": layout.get("words", []),
                         "window_type": window_type,
@@ -507,31 +457,32 @@ async def periodic_wordcloud_update():
                         "unique_keywords": wordcloud_data.unique_keywords
                     }
                     
-                    logger.info(f"📊 {window_type} 워드클라우드 - 키워드 수: {len(layout.get('words', []))}")
-                    
                 except Exception as e:
                     logger.error(f"워드클라우드 생성 오류 ({window_type}): {e}")
                     continue
             
-            # WebSocket으로 브로드캐스트 - 모든 윈도우 데이터 포함
             if all_wordcloud_data:
                 await websocket_manager.broadcast({
                     "type": "wordcloud_update",
-                    "data": all_wordcloud_data  # 1min, 5min, 15min 모두 포함
+                    "data": all_wordcloud_data
                 })
                 
-                logger.info(f"📡 주기적 워드클라우드 업데이트 완료 - {datetime.now().strftime('%H:%M:%S')}")
-                logger.info(f"   └─ 전송된 윈도우: {list(all_wordcloud_data.keys())}")
+                logger.info(f"📡 주기적 워드클라우드 업데이트 완료")
             
         except Exception as e:
             logger.error(f"주기적 업데이트 오류: {e}")
-            await asyncio.sleep(10)  # 오류 시 10초 후 재시도
-            
+            await asyncio.sleep(10)
+
 @app.on_event("shutdown")
 async def shutdown():
     """서비스 종료"""
     logger.info("🛑 서비스 종료 중...")
     kafka_consumer.stop()
+    
+    # 재발행기 종료
+    if event_handler.republisher:
+        event_handler.republisher.close()
+    
     logger.info("✅ 서비스 종료 완료")
 
 @app.websocket("/ws/keywords")
@@ -541,84 +492,66 @@ async def websocket_endpoint(websocket: WebSocket):
     
     stats_task = None
     try:
-        # 연결 시 현재 워드클라우드 데이터 전송
-        try:
-            for window_type in ["30min", "1h", "6h"]:
+        # 연결 시 현재 데이터 전송
+        for window_type in ["30min", "1h", "6h"]:
+            try:
                 wordcloud_data = await aggregator.get_current_wordcloud(window_type)
                 layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
                 
                 await websocket.send_text(json.dumps({
                     "type": "wordcloud_update",
-                    "data": {
-                        window_type: layout
-                    }
+                    "data": {window_type: layout}
                 }, ensure_ascii=False))
-        except Exception as e:
-            logger.error(f"초기 워드클라우드 데이터 전송 오류: {e}")
-        
-        # 현재 트렌딩 키워드 전송
-        try:
-            trending = await analyzer.get_trending_keywords_advanced(10)
-            await websocket.send_text(json.dumps({
-                "type": "initial_trending",
-                "data": [
-                    {
-                        "keyword": t.keyword,
-                        "count": t.count_1h,
-                        "trend": t.trend_direction,
-                        "score": t.compound_score
-                    }
-                    for t in trending
-                ]
-            }, ensure_ascii=False))
-        except Exception as e:
-            logger.error(f"초기 트렌딩 키워드 전송 오류: {e}")
+            except Exception as e:
+                logger.error(f"초기 워드클라우드 데이터 전송 오류: {e}")
         
         # 통계 업데이트 스트리밍 시작
         stats_task = asyncio.create_task(stream_stats(websocket))
         
-        # 연결 유지 - 핑/퐁 방식으로 변경
-        try:
-            while True:
-                # 클라이언트로부터의 메시지를 기다리되, 타임아웃 설정
+        # 연결 유지
+        while True:
+            try:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                logger.debug(f"WebSocket 메시지 수신: {message}")
+            except asyncio.TimeoutError:
                 try:
-                    # 30초 타임아웃으로 메시지 대기
-                    message = await asyncio.wait_for(
-                        websocket.receive_text(), 
-                        timeout=30.0
-                    )
-                    # 메시지가 오면 단순히 로깅
-                    logger.debug(f"WebSocket 메시지 수신: {message}")
-                except asyncio.TimeoutError:
-                    # 타임아웃이 발생하면 ping 전송하여 연결 확인
-                    try:
-                        await websocket.send_text(json.dumps({
-                            "type": "ping",
-                            "timestamp": datetime.now().isoformat()
-                        }))
-                    except Exception:
-                        # ping 전송 실패하면 연결이 끊어진 것으로 판단
-                        break
+                    await websocket.send_text(json.dumps({
+                        "type": "ping",
+                        "timestamp": datetime.now().isoformat()
+                    }))
+                except Exception:
+                    break
                         
-        except WebSocketDisconnect:
-            logger.info("클라이언트가 WebSocket 연결을 종료했습니다")
-        except Exception as e:
-            logger.error(f"WebSocket 연결 유지 중 오류: {e}")
-            
+    except WebSocketDisconnect:
+        logger.info("클라이언트가 WebSocket 연결을 종료했습니다")
     except Exception as e:
         logger.error(f"WebSocket 엔드포인트 오류: {e}")
     finally:
-        # 정리 작업
         if stats_task and not stats_task.done():
             stats_task.cancel()
-            try:
-                await stats_task
-            except asyncio.CancelledError:
-                pass
-        
         websocket_manager.disconnect(websocket)
-        logger.info("WebSocket 연결이 정리되었습니다")
 
+async def stream_stats(websocket: WebSocket):
+    """주기적 통계 업데이트"""
+    try:
+        while True:
+            stats = {
+                "processed_articles": event_handler.processed_count,
+                "active_keywords": len((await aggregator.get_current_wordcloud("30min")).keywords),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            await websocket.send_text(json.dumps({
+                "type": "stats_update",
+                "data": stats
+            }))
+            
+            await asyncio.sleep(5)
+            
+    except Exception as e:
+        logger.error(f"통계 스트리밍 오류: {e}")
+
+# === API 엔드포인트들 ===
 @app.get("/trending-keywords-advanced")
 async def get_trending_keywords_advanced(limit: int = 20):
     """고도화된 트렌딩 키워드 조회"""
@@ -660,19 +593,6 @@ async def get_recent_alerts(limit: int = 10):
     alerts = await analyzer.get_recent_alerts(limit)
     return {"alerts": alerts}
 
-@app.get("/stats")
-async def get_service_stats():
-    """서비스 통계"""
-    extraction_stats = extractor.get_extraction_stats()
-    
-    return {
-        "processed_articles": event_handler.processed_count,
-        "active_websockets": len(websocket_manager.active_connections),
-        "extraction_stats": extraction_stats,
-        "kafka_running": kafka_consumer.running,
-        "timestamp": datetime.now().isoformat()
-    }
-
 @app.post("/extract-keywords")
 async def manual_extract_keywords(request: KeywordRequest):
     """수동 키워드 추출 (테스트용)"""
@@ -695,54 +615,8 @@ async def manual_extract_keywords(request: KeywordRequest):
         "extraction_method": "hybrid" if extractor.openai_client else "basic"
     }
 
-@app.get("/health")
-async def health_check():
-    """헬스 체크"""
-    try:
-        await analyzer.redis_client.ping()
-        redis_status = True
-    except:
-        redis_status = False
-    
-    return {
-        "status": "healthy" if (redis_status and kafka_consumer.running) else "degraded",
-        "services": {
-            "redis": redis_status,
-            "kafka_consumer": kafka_consumer.running,
-            "websocket_connections": len(websocket_manager.active_connections)
-        },
-        "kafka_config": {
-            "bootstrap_servers": KAFKA_BOOTSTRAP_SERVERS,
-            "topic": KAFKA_TOPIC,
-            "group_id": KAFKA_GROUP_ID
-        },
-        "processed_count": event_handler.processed_count
-    }
-# 통계 스트리밍 함수 추가
-async def stream_stats(websocket: WebSocket):
-    """주기적 통계 업데이트"""
-    try:
-        while True:
-            stats = {
-                "processed_articles": event_handler.processed_count,
-                "active_keywords": len((await aggregator.get_current_wordcloud("5min")).keywords),
-                "updates_received": aggregator.stats["updates_sent"],
-                "last_update": aggregator.stats["last_update"].isoformat() if aggregator.stats["last_update"] else None
-            }
-            
-            await websocket.send_text(json.dumps({
-                "type": "stats_update",
-                "data": stats
-            }))
-            
-            await asyncio.sleep(5)  # 5초마다 업데이트
-            
-    except Exception as e:
-        logger.error(f"통계 스트리밍 오류: {e}")
-
-# 새로운 API 엔드포인트 추가
 @app.get("/wordcloud/{window_type}")
-async def get_wordcloud(window_type: str = "5min"):
+async def get_wordcloud(window_type: str = "30min"):
     """워드클라우드 데이터 조회"""
     if window_type not in ["30min", "1h", "6h"]:
         return {"error": "Invalid window type"}
@@ -751,12 +625,6 @@ async def get_wordcloud(window_type: str = "5min"):
     layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
     
     return layout
-
-@app.get("/wordcloud/{window_type}/history")
-async def get_wordcloud_history(window_type: str = "5min", hours: int = 1):
-    """워드클라우드 히스토리 조회"""
-    history = await aggregator.get_historical_data(window_type, hours)
-    return {"window_type": window_type, "history": history}
 
 @app.get("/wordcloud/compare")
 async def compare_windows():
@@ -773,21 +641,61 @@ async def compare_windows():
     
     return comparison
 
+# 🔥 재발행기 관련 엔드포인트 (옵셔널)
+@app.get("/republisher/stats")
+async def get_republisher_stats():
+    """키워드 재발행 통계"""
+    if event_handler.republisher:
+        return {
+            "republisher_stats": event_handler.republisher.get_stats(),
+            "processed_articles": event_handler.processed_count,
+            "available": True,
+            "timestamp": datetime.now().isoformat()
+        }
+    else:
+        return {
+            "available": False,
+            "message": "재발행 기능이 비활성화되어 있습니다.",
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.get("/stats")
 async def get_service_stats():
-    """서비스 통계 (업데이트)"""
+    """서비스 통계 (단일 엔드포인트)"""
     extraction_stats = extractor.get_extraction_stats()
-    aggregator_stats = aggregator.get_stats()
     
     return {
         "processed_articles": event_handler.processed_count,
         "active_websockets": len(websocket_manager.active_connections),
         "extraction_stats": extraction_stats,
-        "aggregator_stats": aggregator_stats,
         "kafka_running": kafka_consumer.running,
         "timestamp": datetime.now().isoformat()
     }
-# 🔥 디버깅용 엔드포인트 추가
+
+@app.get("/health")
+async def health_check():
+    """헬스 체크"""
+    try:
+        await analyzer.redis_client.ping()
+        redis_status = True
+    except:
+        redis_status = False
+    
+    return {
+        "status": "healthy" if (redis_status and kafka_consumer.running) else "degraded",
+        "services": {
+            "redis": redis_status,
+            "kafka_consumer": kafka_consumer.running,
+            "websocket_connections": len(websocket_manager.active_connections),
+        },
+        "kafka_config": {
+            "bootstrap_servers": KAFKA_BOOTSTRAP_SERVERS,
+            "topic": KAFKA_TOPIC,
+            "group_id": KAFKA_GROUP_ID
+        },
+        "processed_count": event_handler.processed_count
+    }
+
 @app.get("/debug/kafka-status")
 async def debug_kafka_status():
     """Kafka 상태 디버깅"""
@@ -796,9 +704,8 @@ async def debug_kafka_status():
         "worker_thread_alive": kafka_consumer.worker_thread.is_alive() if kafka_consumer.worker_thread else False,
         "processed_messages": event_handler.processed_count,
         "config": kafka_consumer.kafka_config,
-        "topics": kafka_consumer.topics
+        "topics": kafka_consumer.topics,
     }
 
-
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)  # reload=False로 설정
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
