@@ -218,8 +218,14 @@ class AdvancedTrendAnalyzer:
         frequency_score = min(counts.get("1h", 0) / 10.0, 10.0)  # 0-10
         velocity_score = min(max(velocity_1h, 0) / 5.0, 10.0)    # 0-10
         anomaly_score_norm = anomaly_score * 10.0                # 0-10
-        momentum_score = min(counts.get("6h", 0) / counts.get("24h", 1), 5.0) * 2  # 0-10
-        
+
+        count_24h = counts.get("24h",1)
+        count_6h = counts.get("6h",1)
+        # 수정
+        if count_24h > 0:
+            momentum_score = min(count_6h / count_24h, 5.0) * 2
+        else:
+            momentum_score = min(count_6h / max(count_6h, 1), 5.0) * 2
         compound = (
             frequency_score * weights["frequency"] +
             velocity_score * weights["velocity"] +
