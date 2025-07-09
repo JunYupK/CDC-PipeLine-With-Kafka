@@ -1,4 +1,4 @@
-package org.be.crawlerservice.service;
+package org.be.crawlerservice.service.health;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

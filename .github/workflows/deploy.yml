@@ -1,0 +1,77 @@
+# .github/workflows/deploy.yml
+name: Build and Deploy to GCP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: your-gcp-project-id
+  REGION: asia-northeast3
+  FASTAPI_SERVICE: keyword-extraction-api
+  WORDCLOUD_SERVICE: wordcloud-dashboard
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ env.PROJECT_ID }}
+    
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+    
+    # FastAPI 서비스 빌드 & 배포
+    - name: Build FastAPI Image
+      run: |
+        cd keyword-extraction
+        docker build -t gcr.io/$PROJECT_ID/$FASTAPI_SERVICE:$GITHUB_SHA .
+        docker push gcr.io/$PROJECT_ID/$FASTAPI_SERVICE:$GITHUB_SHA
+    
+    - name: Deploy FastAPI to Cloud Run
+      run: |
+        gcloud run deploy $FASTAPI_SERVICE \
+          --image gcr.io/$PROJECT_ID/$FASTAPI_SERVICE:$GITHUB_SHA \
+          --platform managed \
+          --region $REGION \
+          --allow-unauthenticated \
+          --port 8001 \
+          --memory 2Gi \
+          --cpu 2 \
+          --set-env-vars="KAFKA_BOOTSTRAP_SERVERS=${{ secrets.KAFKA_SERVERS }}" \
+          --set-env-vars="KAFKA_TOPIC=${{ secrets.KAFKA_TOPIC }}" \
+          --set-env-vars="KAFKA_GROUP_ID=keyword-extraction-group" \
+          --set-env-vars="REDIS_HOST=${{ secrets.REDIS_HOST }}" \
+          --set-env-vars="REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}"
+    
+    # WordCloud 서비스 빌드 & 배포
+    - name: Build WordCloud Image
+      run: |
+        cd keyword-extraction/wordcloud-dashboard
+        docker build -t gcr.io/$PROJECT_ID/$WORDCLOUD_SERVICE:$GITHUB_SHA .
+        docker push gcr.io/$PROJECT_ID/$WORDCLOUD_SERVICE:$GITHUB_SHA
+    
+    - name: Deploy WordCloud to Cloud Run
+      run: |
+        gcloud run deploy $WORDCLOUD_SERVICE \
+          --image gcr.io/$PROJECT_ID/$WORDCLOUD_SERVICE:$GITHUB_SHA \
+          --platform managed \
+          --region $REGION \
+          --allow-unauthenticated \
+          --port 80 \
+          --memory 512Mi \
+          --cpu 1
+    
+    # URL 출력
+    - name: Get Service URLs
+      run: |
+        echo "FastAPI URL: $(gcloud run services describe $FASTAPI_SERVICE --region=$REGION --format='value(status.url)')"
+        echo "WordCloud URL: $(gcloud run services describe $WORDCLOUD_SERVICE --region=$REGION --format='value(status.url)')"

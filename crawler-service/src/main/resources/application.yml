@@ -42,7 +42,21 @@ spring:
           max-active: 8
           max-idle: 8
           min-idle: 0
-
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    streams:
+      application-id: alert-streams-app
+      default-key-serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+      default-value-serde: org.springframework.kafka.support.serializer.JsonSerde
+      properties:
+        commit.interval.ms: 1000
+        cache.max.bytes.buffering: 10240
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.springframework.kafka.support.serializer.JsonSerde
+        metadata.max.age.ms: 300000
+        auto.offset.reset: earliest
+        enable.auto.commit: true
+        processing.guarantee: at_least_once
   jackson:
     serialization:
       write-dates-as-timestamps: false
@@ -75,6 +89,25 @@ crawler:
   max-concurrent-tasks: 5
   timeout-seconds: 180
 
+# 알림 서비스 설정
+alert:
+  topics:
+    input: keyword.alert
+    breaking-alerts: breaking-alerts
+    trending-alerts: trending-alerts
+
+  # 알림 조건 설정
+  conditions:
+    breaking:
+      keyword-threshold: 50  # 키워드 빈도 임계값
+      time-window-minutes: 5
+      min-sources: 3  # 최소 언론사 수
+
+    trending:
+      growth-rate-threshold: 2.0  # 증가율 임계값
+      time-window-minutes: 30
+      min-mentions: 10
+
 # ?? ??
 logging:
   level:
@@ -85,3 +118,15 @@ logging:
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+  # 액추에이터 설정
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: health,info,metrics,kafka-streams
+    endpoint:
+      health:
+        show-details: always
+      kafka-streams:
+        enabled: true

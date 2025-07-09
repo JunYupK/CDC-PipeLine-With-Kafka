@@ -1,4 +1,4 @@
-package org.be.crawlerservice.service;
+package org.be.crawlerservice.service.health;
 
 import java.util.Map;
 public interface HealthCheckService {

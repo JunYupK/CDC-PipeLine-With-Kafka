@@ -1,7 +1,7 @@
 package org.be.crawlerservice.controller;
 
 import lombok.RequiredArgsConstructor;
-import org.be.crawlerservice.service.HealthCheckService;
+import org.be.crawlerservice.service.health.HealthCheckService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 

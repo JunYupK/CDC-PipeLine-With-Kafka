@@ -1,0 +1,45 @@
+# docker-compose.yml (로컬 테스트용)
+version: '3.8'
+
+services:
+  keyword-extraction-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka.internal:9092
+      - KAFKA_TOPIC=cdc.public.article
+      - KAFKA_GROUP_ID=keyword-extraction-group
+      - REDIS_HOST=redis.internal
+      - REDIS_PASSWORD=homesweethome
+    volumes:
+      - ./keyword-extraction:/app
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  wordcloud-dashboard:
+    build:
+      context: ./wordcloud-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - keyword-extraction-api
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass homesweethome
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
