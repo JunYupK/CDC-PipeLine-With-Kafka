@@ -485,12 +485,12 @@ async def periodic_wordcloud_update():
     
     while True:
         try:
-            await asyncio.sleep(60)  # 1분 대기
+            await asyncio.sleep(300)  # 1분 대기
             
             # 🔥 중요: 모든 시간 윈도우의 데이터를 항상 포함
             all_wordcloud_data = {}
             
-            for window_type in ["1min", "5min", "15min"]:
+            for window_type in ["30min", "1h", "6h"]:
                 try:
                     # 현재 워드클라우드 데이터 가져오기
                     wordcloud_data = await aggregator.get_current_wordcloud(window_type)
@@ -543,7 +543,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         # 연결 시 현재 워드클라우드 데이터 전송
         try:
-            for window_type in ["1min", "5min", "15min"]:
+            for window_type in ["30min", "1h", "6h"]:
                 wordcloud_data = await aggregator.get_current_wordcloud(window_type)
                 layout = wordcloud_generator.generate_wordcloud_layout(wordcloud_data)
                 
@@ -744,7 +744,7 @@ async def stream_stats(websocket: WebSocket):
 @app.get("/wordcloud/{window_type}")
 async def get_wordcloud(window_type: str = "5min"):
     """워드클라우드 데이터 조회"""
-    if window_type not in ["1min", "5min", "15min"]:
+    if window_type not in ["30min", "1h", "6h"]:
         return {"error": "Invalid window type"}
     
     wordcloud_data = await aggregator.get_current_wordcloud(window_type)
@@ -763,7 +763,7 @@ async def compare_windows():
     """다중 윈도우 비교"""
     comparison = {}
     
-    for window_type in ["1min", "5min", "15min"]:
+    for window_type in ["30min", "1h", "6h"]:
         wordcloud_data = await aggregator.get_current_wordcloud(window_type)
         comparison[window_type] = {
             "total_count": wordcloud_data.total_count,

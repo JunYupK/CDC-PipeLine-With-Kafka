@@ -8,7 +8,7 @@ const WordCloudDashboard = () => {
   // eslint-disable-next-line no-unused-vars
   const [wsConnection, setWsConnection] = useState(null); // This state is handled by wsRef, but kept for potential future use or context.
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
-  const [selectedWindow, setSelectedWindow] = useState('5min');
+  const [selectedWindow, setSelectedWindow] = useState('1h');
   // eslint-disable-next-line no-unused-vars
   const [selectedCategory, setSelectedCategory] = useState('all'); // Kept for future filtering implementation.
   const [isPaused, setIsPaused] = useState(false);
@@ -350,22 +350,22 @@ useEffect(() => {
           <h1>실시간 키워드 트렌드</h1>
           <div className="window-toggle">
             <button 
-              className={`window-btn ${selectedWindow === '1min' ? 'active' : ''}`}
-              onClick={() => changeWindow('1min')}
+              className={`window-btn ${selectedWindow === '30min' ? 'active' : ''}`}
+              onClick={() => changeWindow('30min')}
             >
-              1분
+              30분
             </button>
             <button 
-              className={`window-btn ${selectedWindow === '5min' ? 'active' : ''}`}
-              onClick={() => changeWindow('5min')}
+              className={`window-btn ${selectedWindow === '1h' ? 'active' : ''}`}
+              onClick={() => changeWindow('1h')}
             >
-              5분
+              1시간
             </button>
             <button 
-              className={`window-btn ${selectedWindow === '15min' ? 'active' : ''}`}
-              onClick={() => changeWindow('15min')}
+              className={`window-btn ${selectedWindow === '6h' ? 'active' : ''}`}
+              onClick={() => changeWindow('6h')}
             >
-              15분
+              6시간
             </button>
           </div>
         </div>

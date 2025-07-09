@@ -30,9 +30,9 @@ class RealTimeKeywordAggregator:
         
         # 시간 윈도우별 메모리 집계
         self.windows = {
-            "1min": {"data": defaultdict(int), "start": time.time()},
-            "5min": {"data": defaultdict(int), "start": time.time()},
-            "15min": {"data": defaultdict(int), "start": time.time()}
+            "30min": {"data": defaultdict(int), "start": time.time()},
+            "1h": {"data": defaultdict(int), "start": time.time()},
+            "6h": {"data": defaultdict(int), "start": time.time()}
         }
         
         # 이벤트 핸들러
@@ -183,11 +183,11 @@ class RealTimeKeywordAggregator:
     def _get_window_duration(self, window_type: str) -> int:
         """윈도우 타입별 기간 (초)"""
         durations = {
-            "1min": 60,
-            "5min": 300,
-            "15min": 900
+            "30min": 1800,  # 30분
+            "1h": 3600,     # 1시간
+            "6h": 21600     # 6시간
         }
-        return durations.get(window_type, 300)
+        return durations.get(window_type, 3600)
     
     async def _flush_window(self, window_type: str):
         """윈도우 데이터를 Redis로 플러시"""
